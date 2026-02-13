@@ -12,6 +12,7 @@
 |--------|------|----------|
 | `check.yml` | 代码质量检查（fmt、clippy、build、doc） | push、PR |
 | `test.yml` | 集成测试（通过 axtest 框架） | push、PR |
+| `verify-tag.yml` | 验证版本标签（分支、版本一致性） | 被 deploy/release 调用 |
 | `deploy.yml` | 部署文档到 GitHub Pages | 版本标签 |
 | `release.yml` | 创建 GitHub Release 并发布到 crates.io | 版本标签 |
 
@@ -64,6 +65,8 @@ on:
 jobs:
   check:
     uses: arceos-hypervisor/axci/.github/workflows/check.yml@main
+    with:
+      all_features: true  # 可选，默认 true
 ```
 
 #### test.yml - 集成测试
@@ -113,6 +116,9 @@ on:
 jobs:
   deploy:
     uses: arceos-hypervisor/axci/.github/workflows/deploy.yml@main
+    with:
+      verify_branch: true   # 可选，默认 true
+      verify_version: true  # 可选，默认 true
 ```
 
 #### release.yml - 发布
@@ -130,6 +136,9 @@ on:
 jobs:
   release:
     uses: arceos-hypervisor/axci/.github/workflows/release.yml@main
+    with:
+      verify_branch: true   # 可选，默认 true
+      verify_version: true  # 可选，默认 true
     secrets:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 ```
@@ -154,6 +163,11 @@ jobs:
 - `targets`: 编译目标列表
 - `rust_components`: 需要安装的 Rust 组件
 
+输入参数：
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `all_features` | 是否使用 --all-features 标志 | true |
+
 ### test.yml
 
 通过 axtest 框架执行集成测试。
@@ -166,13 +180,35 @@ jobs:
 | `test_targets` | 测试目标 | all |
 | `skip_build` | 跳过构建 | false |
 
+### verify-tag.yml
+
+验证版本标签的合法性。
+
+输入参数：
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `verify_branch` | 验证标签是否在正确分支 | true |
+| `verify_version` | 验证 Cargo.toml 版本与标签一致 | true |
+
+输出：
+| 输出 | 说明 |
+|------|------|
+| `should_proceed` | 是否继续执行 deploy/release |
+| `is_prerelease` | 是否为预发布标签 |
+
 ### deploy.yml
 
 将文档部署到 GitHub Pages。
 
 触发条件：
 - 版本标签 `v*.*.*`
-- 标签必须在 `main` 或 `master` 分支上
+- 标签必须在 `main` 或 `master` 分支上（可通过 `verify_branch` 配置）
+
+输入参数：
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `verify_branch` | 验证标签是否在 main/master 分支 | true |
+| `verify_version` | 验证 Cargo.toml 版本与标签一致 | true |
 
 ### release.yml
 
@@ -181,6 +217,12 @@ jobs:
 触发条件：
 - 稳定版本：`v*.*.*`（必须在 main/master 分支）
 - 预发布版本：`v*.*.*-pre.*`（必须在 dev 分支）
+
+输入参数：
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `verify_branch` | 验证标签是否在正确分支 | true |
+| `verify_version` | 验证 Cargo.toml 版本与标签一致 | true |
 
 ## 版本发布流程
 
@@ -219,10 +261,11 @@ git push origin v1.0.0-pre.1
 axci/
 ├── .github/
 │   └── workflows/
-│       ├── check.yml      # 代码检查
-│       ├── test.yml       # 集成测试
-│       ├── deploy.yml     # 文档部署
-│       └── release.yml    # 发布
+│       ├── check.yml        # 代码检查
+│       ├── test.yml         # 集成测试
+│       ├── verify-tag.yml   # 标签验证
+│       ├── deploy.yml       # 文档部署
+│       └── release.yml      # 发布
 └── README.md
 ```
 

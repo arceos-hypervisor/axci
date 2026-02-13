@@ -2,12 +2,25 @@
 # Deploys documentation to GitHub Pages on version tags
 #
 # Trigger: push tag v*.*.*
-# Required: Tag must be on main or master branch
+# Inputs:
+#   verify_branch: Verify tag is on main/master branch (default: true)
+#   verify_version: Verify Cargo.toml version matches tag (default: true)
 
 name: Deploy
 
 on:
   workflow_call:
+    inputs:
+      verify_branch:
+        description: 'Verify tag is on main/master branch'
+        required: false
+        default: true
+        type: boolean
+      verify_version:
+        description: 'Verify Cargo.toml version matches tag'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -24,50 +37,16 @@ env:
 
 jobs:
   verify-tag:
-    name: Verify Tag
-    runs-on: ubuntu-latest
-    outputs:
-      should_deploy: ${{ steps.check.outputs.should_deploy }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Check if tag is on main or master branch
-        id: check
-        run: |
-          git fetch origin main master || true
-          BRANCHES=$(git branch -r --contains ${{ github.ref }})
-          
-          if echo "$BRANCHES" | grep -qE 'origin/(main|master)'; then
-            echo "✓ Tag is on main or master branch"
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "✗ Tag is not on main or master branch, skipping deployment"
-            echo "Tag is on: $BRANCHES"
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Verify version consistency
-        if: steps.check.outputs.should_deploy == 'true'
-        run: |
-          TAG_VERSION="${{ github.ref_name }}"
-          TAG_VERSION="${TAG_VERSION#v}"
-          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          echo "Git tag version: $TAG_VERSION"
-          echo "Cargo.toml version: $CARGO_VERSION"
-          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "ERROR: Version mismatch! Tag version ($TAG_VERSION) != Cargo.toml version ($CARGO_VERSION)"
-            exit 1
-          fi
-          echo "✓ Version check passed!"
+    uses: ./.github/workflows/verify-tag.yml
+    with:
+      verify_branch: ${{ inputs.verify_branch }}
+      verify_version: ${{ inputs.verify_version }}
 
   build:
     name: Build documentation
     runs-on: ubuntu-latest
     needs: verify-tag
-    if: needs.verify-tag.outputs.should_deploy == 'true'
+    if: needs.verify-tag.outputs.should_proceed == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -107,7 +86,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: [verify-tag, build]
-    if: needs.verify-tag.outputs.should_deploy == 'true'
+    if: needs.verify-tag.outputs.should_proceed == 'true'
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

@@ -1,0 +1,120 @@
+# Verify Tag Workflow
+# Verifies version tag consistency and branch requirements
+#
+# Inputs:
+#   verify_branch: Verify tag is on correct branch (default: true)
+#   verify_version: Verify Cargo.toml version matches tag (default: true)
+#
+# Outputs:
+#   should_proceed: Whether to proceed with deploy/release
+#   is_prerelease: Whether this is a prerelease tag
+
+name: Verify Tag
+
+on:
+  workflow_call:
+    inputs:
+      verify_branch:
+        description: 'Verify tag is on correct branch'
+        required: false
+        default: true
+        type: boolean
+      verify_version:
+        description: 'Verify Cargo.toml version matches tag'
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      should_proceed:
+        description: 'Whether to proceed with deploy/release'
+        value: ${{ jobs.verify-tag.outputs.should_proceed }}
+      is_prerelease:
+        description: 'Whether this is a prerelease tag'
+        value: ${{ jobs.verify-tag.outputs.is_prerelease }}
+
+jobs:
+  verify-tag:
+    name: Verify Tag
+    runs-on: ubuntu-latest
+    outputs:
+      should_proceed: ${{ steps.skip.outputs.should_proceed || steps.check.outputs.should_proceed }}
+      is_prerelease: ${{ steps.skip.outputs.is_prerelease || steps.check.outputs.is_prerelease }}
+    steps:
+      - name: Skip all verifications
+        if: ${{ !inputs.verify_branch && !inputs.verify_version }}
+        id: skip
+        run: |
+          echo "Skipping all verifications"
+          echo "should_proceed=true" >> $GITHUB_OUTPUT
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+
+      - name: Checkout code
+        if: ${{ inputs.verify_branch || inputs.verify_version }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check tag type and branch
+        if: ${{ inputs.verify_branch || inputs.verify_version }}
+        id: check
+        run: |
+          git fetch origin main master dev || true
+          
+          TAG="${{ github.ref_name }}"
+          BRANCHES=$(git branch -r --contains ${{ github.ref }})
+          
+          echo "Tag: $TAG"
+          echo "Branches containing this tag: $BRANCHES"
+          
+          # Determine tag type
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre\.[0-9]+$ ]]; then
+            echo "📦 Detected prerelease tag"
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            
+            if [ "${{ inputs.verify_branch }}" = "true" ]; then
+              if echo "$BRANCHES" | grep -q 'origin/dev'; then
+                echo "✓ Prerelease tag is on dev branch"
+                echo "should_proceed=true" >> $GITHUB_OUTPUT
+              else
+                echo "✗ Prerelease tag must be on dev branch, skipping"
+                echo "should_proceed=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "Skipping branch verification"
+              echo "should_proceed=true" >> $GITHUB_OUTPUT
+            fi
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "📦 Detected stable release tag"
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            
+            if [ "${{ inputs.verify_branch }}" = "true" ]; then
+              if echo "$BRANCHES" | grep -qE 'origin/(main|master)'; then
+                echo "✓ Stable release tag is on main or master branch"
+                echo "should_proceed=true" >> $GITHUB_OUTPUT
+              else
+                echo "✗ Stable release tag must be on main or master branch, skipping"
+                echo "should_proceed=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "Skipping branch verification"
+              echo "should_proceed=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "✗ Unknown tag format, skipping"
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "should_proceed=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Verify version consistency
+        if: ${{ inputs.verify_version && steps.check.outputs.should_proceed == 'true' }}
+        run: |
+          TAG_VERSION="${{ github.ref_name }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "Git tag version: $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "ERROR: Version mismatch! Tag version ($TAG_VERSION) != Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "✓ Version check passed!"

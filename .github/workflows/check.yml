@@ -2,11 +2,19 @@
 # Performs code quality checks: format, clippy, build, doc
 #
 # Required config: .github/config.json with targets and rust_components
+# Inputs:
+#   all_features: Use --all-features flag (default: true)
 
 name: Check
 
 on:
   workflow_call:
+    inputs:
+      all_features:
+        description: 'Use --all-features flag'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   load-config:
@@ -15,6 +23,7 @@ jobs:
     outputs:
       targets: ${{ steps.config.outputs.targets }}
       rust_components: ${{ steps.config.outputs.rust_components }}
+      all_features: ${{ steps.config.outputs.all_features }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,6 +36,7 @@ jobs:
           
           echo "targets=$TARGETS" >> $GITHUB_OUTPUT
           echo "rust_components=$COMPONENTS" >> $GITHUB_OUTPUT
+          echo "all_features=${{ inputs.all_features }}" >> $GITHUB_OUTPUT
 
   check:
     name: Check
@@ -54,12 +64,27 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Build
-        run: cargo build --target ${{ matrix.target }} --all-features
+        run: |
+          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+            cargo build --target ${{ matrix.target }} --all-features
+          else
+            cargo build --target ${{ matrix.target }}
+          fi
 
       - name: Run clippy
-        run: cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
+        run: |
+          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+            cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
+          else
+            cargo clippy --target ${{ matrix.target }} -- -D warnings
+          fi
 
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D missing-docs
-        run: cargo doc --no-deps --target ${{ matrix.target }} --all-features
+        run: |
+          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+            cargo doc --no-deps --target ${{ matrix.target }} --all-features
+          else
+            cargo doc --no-deps --target ${{ matrix.target }}
+          fi
