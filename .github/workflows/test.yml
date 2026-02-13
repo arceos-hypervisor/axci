@@ -103,7 +103,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: arceos-hypervisor/axvisor
-          ref: main
+          ref: master
           path: axvisor
           submodules: recursive
 
