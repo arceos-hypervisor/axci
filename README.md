@@ -24,7 +24,7 @@
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/arceos-hypervisor/axtest/main/schema.json",
+  "$schema": "https://raw.githubusercontent.com/arceos-hypervisor/axci/main/schema.json",
   "targets": ["aarch64-unknown-none-softfloat"],
   "rust_components": ["rust-src", "clippy", "rustfmt", "llvm-tools"],
   "component": {
@@ -65,8 +65,17 @@ on:
 jobs:
   check:
     uses: arceos-hypervisor/axci/.github/workflows/check.yml@main
+```
+
+可选参数：
+```yaml
+jobs:
+  check:
+    uses: arceos-hypervisor/axci/.github/workflows/check.yml@main
     with:
-      all_features: true  # 可选，默认 true
+      all_features: false                    # 默认 true
+      targets: '["aarch64-unknown-none"]'     # 默认 aarch64-unknown-none-softfloat
+      rust_components: 'rust-src, clippy'     # 默认全部
 ```
 
 #### test.yml - 集成测试
@@ -81,25 +90,20 @@ on:
     tags-ignore: ['**']
   pull_request:
   workflow_dispatch:
-    inputs:
-      test_targets:
-        description: '测试目标 (all, axvisor, starry)'
-        required: false
-        default: 'all'
-      skip_build:
-        description: '跳过构建'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   test:
     uses: arceos-hypervisor/axci/.github/workflows/test.yml@main
+```
+
+可选参数：
+```yaml
+jobs:
+  test:
+    uses: arceos-hypervisor/axci/.github/workflows/test.yml@main
     with:
-      component_repo: ${{ github.repository }}
-      component_ref: ${{ github.ref }}
-      test_targets: ${{ inputs.test_targets || 'all' }}
-      skip_build: ${{ inputs.skip_build || false }}
+      crate_name: 'arm_vcpu'      # 默认自动检测
+      test_targets: 'axvisor'     # 默认 all (axvisor, starry)
 ```
 
 #### deploy.yml - 文档部署
@@ -159,26 +163,27 @@ jobs:
 3. **Clippy 检查** - `cargo clippy`
 4. **文档生成** - `cargo doc`
 
-需要配置：
-- `targets`: 编译目标列表
-- `rust_components`: 需要安装的 Rust 组件
-
 输入参数：
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `all_features` | 是否使用 --all-features 标志 | true |
+| `targets` | 编译目标 (JSON 数组) | `["aarch64-unknown-none-softfloat"]` |
+| `rust_components` | Rust 组件 (逗号分隔) | `rust-src, clippy, rustfmt, llvm-tools` |
 
 ### test.yml
 
-通过 axtest 框架执行集成测试。
+运行集成测试，通过 patch 方式将组件集成到测试目标中构建验证。
 
 输入参数：
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `component_repo` | 组件仓库 | 必需 |
-| `component_ref` | 组件引用 | 必需 |
-| `test_targets` | 测试目标 | all |
+| `crate_name` | 组件 crate 名称 | 自动检测 |
+| `test_targets` | 测试目标（逗号分隔或 "all"） | all |
 | `skip_build` | 跳过构建 | false |
+
+默认测试目标：
+- `axvisor` - https://github.com/arceos-hypervisor/axvisor
+- `starry` - https://github.com/Starry-OS/StarryOS
 
 ### verify-tag.yml
 
@@ -266,12 +271,39 @@ axci/
 │       ├── verify-tag.yml   # 标签验证
 │       ├── deploy.yml       # 文档部署
 │       └── release.yml      # 发布
+├── schema.json              # 配置文件 JSON Schema
 └── README.md
 ```
 
-## 相关项目
+## 配置文件 Schema
 
-- [axtest](https://github.com/arceos-hypervisor/axtest) - 共享测试框架
+对于简单使用，无需配置文件。axci 提供以下默认值：
+
+| 配置项 | 默认值 |
+|--------|--------|
+| 编译目标 | `aarch64-unknown-none-softfloat` |
+| Rust 组件 | `rust-src, clippy, rustfmt, llvm-tools` |
+| 测试目标 | `axvisor, starry` |
+
+如果需要自定义，可通过 `with:` 参数覆盖。
+
+**高级配置（可选）：**
+
+如果需要更复杂的测试配置（如自定义 patch 路径、额外的测试目标等），可创建 `.github/config.json`：
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/arceos-hypervisor/axci/main/schema.json",
+  "test_targets": [
+    {
+      "name": "custom_target",
+      "repo": {"url": "https://github.com/org/repo", "branch": "main"},
+      "build": {"command": "make build", "timeout_minutes": 20},
+      "patch": {"path_template": "../component"}
+    }
+  ]
+}
+```
 
 ## License
 

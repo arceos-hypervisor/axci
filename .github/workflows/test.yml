@@ -1,43 +1,148 @@
 # Integration Test Workflow
-# Runs integration tests using axtest framework
+# Runs integration tests by patching component into test targets
 #
-# Required config: .github/config.json with test_targets
+# Default test targets: axvisor, starry
+# Inputs:
+#   crate_name: Component crate name (required, auto-detected if empty)
+#   test_targets: Test targets to run (comma-separated or "all")
+#   skip_build: Skip build step
 
 name: Test
 
 on:
   workflow_call:
     inputs:
-      component_repo:
-        description: 'Component repository (owner/repo)'
-        required: true
-        type: string
-      component_ref:
-        description: 'Component ref (branch or tag)'
-        required: true
+      crate_name:
+        description: 'Component crate name (auto-detected from Cargo.toml if empty)'
+        required: false
+        default: ''
         type: string
       test_targets:
-        description: 'Test targets (all, axvisor, starry)'
+        description: 'Test targets (comma-separated or "all")'
         required: false
         default: 'all'
         type: string
       skip_build:
-        description: 'Skip build'
+        description: 'Skip build step'
         required: false
         default: false
         type: boolean
-      test_framework_ref:
-        description: 'Test framework version (branch or tag)'
-        required: false
-        default: 'main'
-        type: string
+
+env:
+  # Default test targets configuration
+  DEFAULT_TEST_TARGETS: |
+    [
+      {
+        "name": "axvisor",
+        "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "main"},
+        "build": {"command": "make build A=examples/linux", "timeout_minutes": 15},
+        "patch": {"path_template": "../component"}
+      },
+      {
+        "name": "starry",
+        "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
+        "build": {"command": "make build", "timeout_minutes": 15},
+        "patch": {"path_template": "../component"}
+      }
+    ]
 
 jobs:
   test:
-    name: Integration Test
-    uses: arceos-hypervisor/axtest/.github/workflows/integration-test.yml@main
-    with:
-      component_repo: ${{ inputs.component_repo }}
-      component_ref: ${{ inputs.component_ref }}
-      test_targets: ${{ inputs.test_targets }}
-      skip_build: ${{ inputs.skip_build }}
+    name: Test ${{ matrix.target.name }}
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_build }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(env.DEFAULT_TEST_TARGETS) }}
+    
+    steps:
+      - name: Filter test targets
+        id: filter
+        run: |
+          INPUT="${{ inputs.test_targets }}"
+          TARGET_NAME="${{ matrix.target.name }}"
+          
+          if [ "$INPUT" = "all" ] || [ -z "$INPUT" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          elif echo ",$INPUT," | grep -q ",$TARGET_NAME,"; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Checkout caller's repository (the component being tested)
+      - name: Checkout component
+        if: steps.filter.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: component
+
+      # Checkout test target repository
+      - name: Checkout test target (${{ matrix.target.name }})
+        if: steps.filter.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.repo.url }}
+          ref: ${{ matrix.target.repo.branch }}
+          path: test-target
+          submodules: recursive
+
+      - name: Get component crate name
+        if: steps.filter.outputs.should_run == 'true'
+        id: component
+        working-directory: component
+        run: |
+          if [ -n "${{ inputs.crate_name }}" ]; then
+            CRATE_NAME="${{ inputs.crate_name }}"
+          else
+            CRATE_NAME=$(cargo tree 2>/dev/null | head -1 | cut -d' ' -f1 || basename $(pwd))
+          fi
+          echo "crate_name=$CRATE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Apply patch to Cargo.toml
+        if: steps.filter.outputs.should_run == 'true'
+        working-directory: test-target
+        run: |
+          CRATE_NAME="${{ steps.component.outputs.crate_name }}"
+          SECTION="${{ matrix.target.patch.section }}"
+          [ -z "$SECTION" ] && SECTION="crates-io"
+          PATH_TEMPLATE="${{ matrix.target.patch.path_template }}"
+          [ -z "$PATH_TEMPLATE" ] && PATH_TEMPLATE="../component"
+          
+          echo "" >> Cargo.toml
+          echo "[patch.$SECTION]" >> Cargo.toml
+          echo "$CRATE_NAME = { path = \"$PATH_TEMPLATE\" }" >> Cargo.toml
+          
+          echo "Applied patch:"
+          tail -3 Cargo.toml
+
+      - name: Setup Rust
+        if: steps.filter.outputs.should_run == 'true'
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build
+        if: steps.filter.outputs.should_run == 'true'
+        working-directory: test-target
+        run: |
+          BUILD_CMD="${{ matrix.target.build.command }}"
+          TIMEOUT="${{ matrix.target.build.timeout_minutes }}"
+          [ -z "$TIMEOUT" ] && TIMEOUT=15
+          
+          if [ -n "${{ matrix.target.build.env }}" ]; then
+            echo '${{ toJson(matrix.target.build.env) }}' | jq -r 'to_entries | .[] | "export \(.key)=\"\(.value)\""' | while read line; do
+              eval "$line"
+            done
+          fi
+          
+          echo "Running: $BUILD_CMD (timeout: ${TIMEOUT}m)"
+          timeout ${TIMEOUT}m sh -c "$BUILD_CMD"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.filter.outputs.should_run }}" = "true" ]; then
+            echo "✅ ${{ matrix.target.name }} test completed"
+          else
+            echo "⏭️ ${{ matrix.target.name }} test skipped"
+          fi

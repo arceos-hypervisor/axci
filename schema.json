@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ArceOS Hypervisor Component CI Configuration",
+  "type": "object",
+  "required": ["component", "targets", "rust_components"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference"
+    },
+    "targets": {
+      "type": "array",
+      "description": "编译目标列表",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["aarch64-unknown-none-softfloat"]]
+    },
+    "rust_components": {
+      "type": "array",
+      "description": "需要安装的 Rust 组件",
+      "items": {
+        "type": "string",
+        "enum": ["rust-src", "clippy", "rustfmt", "llvm-tools", "rust-analyzer"]
+      },
+      "examples": [["rust-src", "clippy", "rustfmt", "llvm-tools"]]
+    },
+    "component": {
+      "type": "object",
+      "required": ["name", "crate_name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "组件显示名称"
+        },
+        "crate_name": {
+          "type": "string",
+          "description": "Cargo crate 名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "组件描述"
+        }
+      }
+    },
+    "test_targets": {
+      "type": "array",
+      "description": "集成测试目标列表",
+      "items": {
+        "type": "object",
+        "required": ["name", "repo", "build"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "测试目标名称 (用于日志和标识)"
+          },
+          "repo": {
+            "type": "object",
+            "required": ["url"],
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Git 仓库 URL"
+              },
+              "branch": {
+                "type": "string",
+                "default": "main",
+                "description": "Git 分支"
+              }
+            }
+          },
+          "build": {
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "构建命令"
+              },
+              "timeout_minutes": {
+                "type": "integer",
+                "default": 15,
+                "minimum": 1,
+                "description": "构建超时时间（分钟）"
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "环境变量"
+              }
+            }
+          },
+          "patch": {
+            "type": "object",
+            "description": "Patch 配置",
+            "properties": {
+              "section": {
+                "type": "string",
+                "default": "crates-io",
+                "description": "Cargo.toml patch section"
+              },
+              "path_template": {
+                "type": "string",
+                "default": "../component",
+                "description": "组件路径模板（相对于测试目标仓库）"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

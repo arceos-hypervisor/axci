@@ -1,9 +1,12 @@
 # Quality Check Workflow
 # Performs code quality checks: format, clippy, build, doc
 #
-# Required config: .github/config.json with targets and rust_components
+# Default config: targets = [aarch64-unknown-none-softfloat]
+#                 rust_components = [rust-src, clippy, rustfmt, llvm-tools]
 # Inputs:
 #   all_features: Use --all-features flag (default: true)
+#   targets: Build targets (JSON array, optional)
+#   rust_components: Rust components to install (optional)
 
 name: Check
 
@@ -15,35 +18,25 @@ on:
         required: false
         default: true
         type: boolean
+      targets:
+        description: 'Build targets (JSON array)'
+        required: false
+        default: '["aarch64-unknown-none-softfloat"]'
+        type: string
+      rust_components:
+        description: 'Rust components (comma-separated)'
+        required: false
+        default: 'rust-src, clippy, rustfmt, llvm-tools'
+        type: string
 
 jobs:
-  load-config:
-    name: Load CI Configuration
-    runs-on: ubuntu-latest
-    outputs:
-      targets: ${{ steps.config.outputs.targets }}
-      rust_components: ${{ steps.config.outputs.rust_components }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Load configuration
-        id: config
-        run: |
-          TARGETS=$(jq -c '.targets' .github/config.json)
-          COMPONENTS=$(jq -r '.rust_components | join(", ")' .github/config.json)
-          
-          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
-          echo "rust_components=$COMPONENTS" >> $GITHUB_OUTPUT
-
   check:
     name: Check
     runs-on: ubuntu-latest
-    needs: load-config
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJson(needs.load-config.outputs.targets) }}
+        target: ${{ fromJson(inputs.targets) }}
 
     steps:
       - name: Checkout code
@@ -52,7 +45,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: ${{ needs.load-config.outputs.rust_components }}
+          components: ${{ inputs.rust_components }}
           targets: ${{ matrix.target }}
 
       - name: Check rust version
