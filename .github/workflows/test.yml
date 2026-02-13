@@ -25,8 +25,8 @@ on:
 jobs:
   axvisor:
     name: Axvisor
-    uses: ./.github/workflows/axvisor/test.yml
+    uses: ./.github/workflows/axvisor.yml
 
   starry:
     name: Starry
-    uses: ./.github/workflows/starry/test.yml
+    uses: ./.github/workflows/starry.yml
