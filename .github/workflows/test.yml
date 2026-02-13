@@ -28,33 +28,42 @@ on:
         default: false
         type: boolean
 
-env:
-  # Default test targets configuration
-  DEFAULT_TEST_TARGETS: |
-    [
-      {
-        "name": "axvisor",
-        "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "main"},
-        "build": {"command": "make build A=examples/linux", "timeout_minutes": 15},
-        "patch": {"path_template": "../component"}
-      },
-      {
-        "name": "starry",
-        "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-        "build": {"command": "make build", "timeout_minutes": 15},
-        "patch": {"path_template": "../component"}
-      }
-    ]
-
 jobs:
+  # First job: prepare matrix configuration
+  prepare:
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_build }}
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          MATRIX='[
+            {
+              "name": "axvisor",
+              "repo": {"url": "arceos-hypervisor/axvisor", "branch": "main"},
+              "build": {"command": "make build A=examples/linux", "timeout_minutes": 15},
+              "patch": {"path_template": "../component"}
+            },
+            {
+              "name": "starry",
+              "repo": {"url": "Starry-OS/StarryOS", "branch": "main"},
+              "build": {"command": "make build", "timeout_minutes": 15},
+              "patch": {"path_template": "../component"}
+            }
+          ]'
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   test:
     name: Test ${{ matrix.target.name }}
+    needs: prepare
     runs-on: ubuntu-latest
     if: ${{ !inputs.skip_build }}
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJson(env.DEFAULT_TEST_TARGETS) }}
+        target: ${{ fromJson(needs.prepare.outputs.matrix) }}
     
     steps:
       - name: Filter test targets

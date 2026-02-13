@@ -38,11 +38,26 @@ axci/
 
 `check.yml` 工作流执行代码质量检查，确保代码符合规范并能正确编译。
 
-**执行步骤：**
-1. **代码格式检查** - `cargo fmt --check`
-2. **编译检查** - `cargo build`
-3. **Clippy 检查** - `cargo clippy`
-4. **文档生成** - `cargo doc`
+**执行过程：**
+
+```mermaid
+flowchart LR
+    A[Checkout] --> B[Install Rust]
+    B --> C[fmt --check]
+    C --> D[build]
+    D --> E[clippy]
+    E --> F[doc]
+```
+
+**详细步骤：**
+
+1. **Checkout** - 检出代码
+2. **Install Rust** - 安装 nightly 工具链及指定组件
+3. **Check code format** - `cargo fmt --all -- --check`
+4. **Build** - `cargo build --target <target> [--all-features]`
+5. **Run clippy** - `cargo clippy --target <target> [--all-features] -- -D warnings`
+6. **Build documentation** - `cargo doc --no-deps --target <target> [--all-features]`
+   - 设置 `RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D missing-docs`
 
 **输入参数：**
 
@@ -88,10 +103,33 @@ jobs:
 
 `deploy.yml` 工作流将文档部署到 GitHub Pages。
 
-**执行步骤：**
-1. 调用 `verify-tag.yml` 验证标签合法性
-2. 生成文档
-3. 部署到 GitHub Pages
+**执行过程：**
+
+```mermaid
+flowchart TB
+    A[verify-tag job] --> B{should_proceed?}
+    B -->|true| C[build job]
+    B -->|false| X[跳过]
+    C --> D[Checkout]
+    D --> E[Install Rust]
+    E --> F[cargo doc]
+    F --> G[Upload artifact]
+    G --> H[deploy job]
+    H --> I[Deploy to Pages]
+```
+
+**详细步骤：**
+
+1. **verify-tag job** - 调用 `verify-tag.yml` 验证标签合法性
+2. **build job** - 构建文档
+   - Checkout - 检出代码
+   - Install Rust - 安装 nightly 工具链
+   - Build docs - `cargo doc --no-deps --all-features`
+     - 设置 `RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D missing-docs`
+     - 生成重定向首页 `index.html`
+   - Upload artifact - 上传文档产物
+3. **deploy job** - 部署到 GitHub Pages
+   - 使用 `actions/deploy-pages@v4` 部署
 
 **输入参数：**
 
@@ -123,10 +161,37 @@ jobs:
 
 `release.yml` 工作流创建 GitHub Release 并发布到 crates.io。
 
-**执行步骤：**
-1. 调用 `verify-tag.yml` 验证标签合法性
-2. 发布到 crates.io
-3. 创建 GitHub Release
+**执行过程：**
+
+```mermaid
+flowchart TB
+    A[verify-tag job] --> B{should_proceed?}
+    B -->|true| C[release job]
+    B -->|false| X[跳过]
+    C --> D[Checkout]
+    D --> E[Generate changelog]
+    E --> F[Create GitHub Release]
+    F --> G[publish job]
+    G --> H[Checkout]
+    H --> I[cargo publish --dry-run]
+    I --> J[cargo publish]
+```
+
+**详细步骤：**
+
+1. **verify-tag job** - 调用 `verify-tag.yml` 验证标签合法性
+2. **release job** - 创建 GitHub Release
+   - Checkout - 检出代码（完整历史）
+   - Generate release notes - 从上一个 tag 生成 changelog
+     - `git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${CURRENT_TAG}"`
+   - Create GitHub Release - 使用 `softprops/action-gh-release@v2`
+     - 稳定版本：`prerelease: false`
+     - 预发布版本：`prerelease: true`
+3. **publish job** - 发布到 crates.io
+   - Checkout - 检出代码
+   - Install Rust - 安装 nightly 工具链
+   - Dry run publish - `cargo publish --dry-run`
+   - Publish to crates.io - `cargo publish --token $CARGO_REGISTRY_TOKEN`
 
 **输入参数：**
 
@@ -196,11 +261,35 @@ git push origin v1.0.0-pre.1
 
 `test.yml` 工作流运行集成测试，通过 patch 方式将组件集成到测试目标中构建验证。
 
-**执行步骤：**
-1. 检测或使用指定的 crate 名称
-2. 克隆测试目标仓库
-3. 通过 patch 方式集成组件
-4. 构建并运行测试
+**执行过程：**
+
+```mermaid
+flowchart TB
+    A[prepare job] --> B[Set matrix]
+    B --> C[test job - matrix]
+    C --> D[Filter targets]
+    D --> E{should_run?}
+    E -->|true| F[Checkout component]
+    E -->|false| X[跳过]
+    F --> G[Checkout test target]
+    G --> H[Get crate name]
+    H --> I[Apply patch]
+    I --> J[Setup Rust]
+    J --> K[Build]
+```
+
+**详细步骤：**
+
+1. **prepare job** - 准备测试矩阵
+   - 输出默认测试目标配置（axvisor, starry）
+2. **test job** - 并行执行测试（每个 target 一个 job）
+   - Filter test targets - 根据 `test_targets` 输入过滤
+   - Checkout component - 检出被测组件到 `component/`
+   - Checkout test target - 检出测试目标仓库到 `test-target/`
+   - Get component crate name - 从 Cargo.toml 检测或使用输入值
+   - Apply patch to Cargo.toml - 添加 `[patch.crates-io]` 覆盖依赖
+   - Setup Rust - 安装 nightly 工具链
+   - Build - 执行构建命令（带超时控制）
 
 **输入参数：**
 
@@ -247,6 +336,45 @@ jobs:
 ## 附录：verify-tag.yml
 
 `verify-tag.yml` 是内部工作流，被 `deploy.yml` 和 `release.yml` 调用，用于验证版本标签的合法性。
+
+**执行过程：**
+
+```mermaid
+flowchart TB
+    A[开始] --> B{verify_branch OR verify_version?}
+    B -->|false| C[跳过验证]
+    C --> D[should_proceed=true]
+    B -->|true| E[Checkout]
+    E --> F[Check tag type]
+    F --> G{tag format?}
+    G -->|v*.*.*-pre.*| H[is_prerelease=true]
+    H --> I{on dev branch?}
+    I -->|yes| J[should_proceed=true]
+    I -->|no| K[should_proceed=false]
+    G -->|v*.*.*| L[is_prerelease=false]
+    L --> M{on main/master?}
+    M -->|yes| N[should_proceed=true]
+    M -->|no| O[should_proceed=false]
+    G -->|unknown| P[should_proceed=false]
+    J --> Q{verify_version?}
+    N --> Q
+    Q -->|true| R[Verify version]
+    R --> S{tag version == Cargo.toml version?}
+    S -->|yes| T[通过]
+    S -->|no| U[失败]
+    Q -->|false| T
+```
+
+**详细步骤：**
+
+1. **Skip all verifications** - 如果 `verify_branch=false` 且 `verify_version=false`，直接通过
+2. **Checkout code** - 检出代码（完整历史）
+3. **Check tag type and branch** - 检查标签类型和分支
+   - 预发布标签 `v*.*.*-pre.*` 必须在 `dev` 分支
+   - 稳定标签 `v*.*.*` 必须在 `main` 或 `master` 分支
+   - 未知格式标签拒绝通过
+4. **Verify version consistency** - 验证版本一致性（如果 `verify_version=true`）
+   - 比较标签版本与 `Cargo.toml` 中的 `version` 字段
 
 **输入参数：**
 
