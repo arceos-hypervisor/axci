@@ -1,0 +1,43 @@
+# Integration Test Workflow
+# Runs integration tests using axtest framework
+#
+# Required config: .github/config.json with test_targets
+
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      component_repo:
+        description: 'Component repository (owner/repo)'
+        required: true
+        type: string
+      component_ref:
+        description: 'Component ref (branch or tag)'
+        required: true
+        type: string
+      test_targets:
+        description: 'Test targets (all, axvisor, starry)'
+        required: false
+        default: 'all'
+        type: string
+      skip_build:
+        description: 'Skip build'
+        required: false
+        default: false
+        type: boolean
+      test_framework_ref:
+        description: 'Test framework version (branch or tag)'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  test:
+    name: Integration Test
+    uses: arceos-hypervisor/axtest/.github/workflows/integration-test.yml@main
+    with:
+      component_repo: ${{ inputs.component_repo }}
+      component_ref: ${{ inputs.component_ref }}
+      test_targets: ${{ inputs.test_targets }}
+      skip_build: ${{ inputs.skip_build }}
