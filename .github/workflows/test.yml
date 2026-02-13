@@ -27,10 +27,6 @@ on:
         required: false
         default: 'all'
         type: string
-    secrets:
-      token:
-        description: 'GitHub token with access to target repositories (PAT or GITHUB_TOKEN)'
-        required: true
 
 jobs:
   # ========== Axvisor Tests ==========
@@ -106,7 +102,6 @@ jobs:
         if: steps.filter.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.token }}
           repository: arceos-hypervisor/axvisor
           ref: main
           path: axvisor
@@ -248,7 +243,6 @@ jobs:
         if: steps.filter.outputs.should_run == 'true'
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.token }}
           repository: Starry-OS/StarryOS
           ref: main
           path: starry
