@@ -23,7 +23,6 @@ jobs:
     outputs:
       targets: ${{ steps.config.outputs.targets }}
       rust_components: ${{ steps.config.outputs.rust_components }}
-      all_features: ${{ steps.config.outputs.all_features }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,7 +35,6 @@ jobs:
           
           echo "targets=$TARGETS" >> $GITHUB_OUTPUT
           echo "rust_components=$COMPONENTS" >> $GITHUB_OUTPUT
-          echo "all_features=${{ inputs.all_features }}" >> $GITHUB_OUTPUT
 
   check:
     name: Check
@@ -65,7 +63,7 @@ jobs:
 
       - name: Build
         run: |
-          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+          if [ "${{ inputs.all_features }}" = "true" ]; then
             cargo build --target ${{ matrix.target }} --all-features
           else
             cargo build --target ${{ matrix.target }}
@@ -73,7 +71,7 @@ jobs:
 
       - name: Run clippy
         run: |
-          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+          if [ "${{ inputs.all_features }}" = "true" ]; then
             cargo clippy --target ${{ matrix.target }} --all-features -- -D warnings
           else
             cargo clippy --target ${{ matrix.target }} -- -D warnings
@@ -83,7 +81,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D missing-docs
         run: |
-          if [ "${{ needs.load-config.outputs.all_features }}" = "true" ]; then
+          if [ "${{ inputs.all_features }}" = "true" ]; then
             cargo doc --no-deps --target ${{ matrix.target }} --all-features
           else
             cargo doc --no-deps --target ${{ matrix.target }}
