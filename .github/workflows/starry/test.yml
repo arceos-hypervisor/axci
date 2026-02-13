@@ -14,12 +14,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  build:
     strategy:
       fail-fast: false
       matrix:
         arch: [riscv64, loongarch64, aarch64, x86_64]
-    uses: ./.github/workflows/test-template.yml
-    with:
-      arch: ${{ matrix.arch }}
-    secrets: inherit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: "recursive"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          cache-targets: false
+
+      - uses: arceos-org/setup-musl@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build
+        run: make ARCH=${{ matrix.arch }} build
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: starry-${{ matrix.arch }}
+          path: |
+            *.bin
+            *.elf
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [riscv64, loongarch64, aarch64, x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: "recursive"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          cache-targets: false
+
+      - name: Setup QEMU
+        uses: arceos-org/setup-qemu@v1
+        with:
+          version: 10.1.0
+          arch_list: ${{ matrix.arch }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: starry-${{ matrix.arch }}
+
+      - name: Prepare rootfs
+        run: |
+          make ARCH=${{ matrix.arch }} img
+
+      - name: Test
+        run: scripts/ci-test.py ${{ matrix.arch }}

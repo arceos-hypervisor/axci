@@ -1,4 +1,4 @@
-name: Test for QEMU
+name: Test
 
 on:
   push:
@@ -7,32 +7,62 @@ on:
   workflow_call:
 
 jobs:
-  test-qemu:
-    name: "Test qemu: ${{ matrix.arch }} - ${{ matrix.vmconfigs_name }}"
+  test:
+    name: "Test ${{ matrix.type }}: ${{ matrix.target }} - ${{ matrix.vmconfigs_name }}"
     strategy:
       matrix:
         include:
-          - arch: aarch64
+          # QEMU tests
+          - type: qemu
+            arch: aarch64
+            target: aarch64
             vmconfigs: configs/vms/arceos-aarch64-qemu-smp1.toml
             vmconfigs_name: ArceOS
             vmimage_name: qemu_aarch64_arceos
-          - arch: aarch64
+          - type: qemu
+            arch: aarch64
+            target: aarch64
             vmconfigs: configs/vms/linux-aarch64-qemu-smp1.toml
             vmconfigs_name: Linux
             vmimage_name: qemu_aarch64_linux
-          # - arch: riscv64
+          # - type: qemu
+          #   arch: riscv64
+          #   target: riscv64
           #   vmconfigs: configs/vms/arceos-riscv64-qemu-smp1.toml
           #   vmconfigs_name: ArceOS
           #   vmimage_name: qemu_arceos_riscv64
-          - arch: x86_64
+          - type: qemu
+            arch: x86_64
+            target: x86_64
             vmconfigs: configs/vms/nimbos-x86_64-qemu-smp1.toml
             vmconfigs_name: NimbOS
             vmimage_name: qemu_x86_64_nimbos
+          # Board tests
+          - type: board
+            board: phytiumpi
+            target: phytiumpi
+            vmconfigs: configs/vms/arceos-aarch64-e2000-smp1.toml
+            vmconfigs_name: ArceOS
+          - type: board
+            board: phytiumpi
+            target: phytiumpi
+            vmconfigs: configs/vms/linux-aarch64-e2000-smp1.toml
+            vmconfigs_name: Linux
+          - type: board
+            board: roc-rk3568-pc
+            target: roc-rk3568-pc
+            vmconfigs: configs/vms/arceos-aarch64-rk3568-smp1.toml
+            vmconfigs_name: ArceOS
+          - type: board
+            board: roc-rk3568-pc
+            target: roc-rk3568-pc
+            vmconfigs: configs/vms/linux-aarch64-rk3568-smp1.toml
+            vmconfigs_name: Linux
       fail-fast: false
     runs-on:
       - self-hosted
       - linux
-      - intel
+      - ${{ matrix.type == 'qemu' && 'intel' || matrix.board }}
 
     steps:
       - name: Clean up workspace
@@ -50,7 +80,8 @@ jobs:
       - name: Install dependencies
         run: cargo +stable install ostool --version ^0.8
 
-      - name: Download images and patch vm configs
+      - name: Download images and patch vm configs (QEMU only)
+        if: matrix.type == 'qemu'
         run: |
           ls -lha .
           ls -lha modules/
@@ -86,21 +117,33 @@ jobs:
             # Check if rootfs.img exists after extraction
             if [ -f "${ROOTFS_IMG_PATH}" ]; then
               echo "Found rootfs.img, patching qemu-aarch64.toml file..."
-              sed -i 's|file=${workspaceFolder}/tmp/rootfs.img|file='"${ROOTFS_IMG_PATH}"'|' ".github/workflows/qemu-${{ matrix.arch }}.toml"
+              sed -i 's|file=${workspaceFolder}/tmp/rootfs.img|file='"${ROOTFS_IMG_PATH}"'|' ".github/workflows/axvisor/qemu-${{ matrix.arch }}.toml"
               echo "Rootfs setup completed"
             else
               echo "No rootfs.img found, removing rootfs device configuration from qemu-${{ matrix.arch }}.toml..."
-              sed -i '/-device/,/virtio-blk-device,drive=disk0/d' ".github/workflows/qemu-${{ matrix.arch }}.toml"
-              sed -i '/-drive/,/id=disk0,if=none,format=raw,file=${workspaceFolder}\/tmp\/rootfs.img/d' ".github/workflows/qemu-${{ matrix.arch }}.toml"
-              sed -i 's/root=\/dev\/vda rw //' ".github/workflows/qemu-${{ matrix.arch }}.toml"
+              sed -i '/-device/,/virtio-blk-device,drive=disk0/d' ".github/workflows/axvisor/qemu-${{ matrix.arch }}.toml"
+              sed -i '/-drive/,/id=disk0,if=none,format=raw,file=${workspaceFolder}\/tmp\/rootfs.img/d' ".github/workflows/axvisor/qemu-${{ matrix.arch }}.toml"
+              sed -i 's/root=\/dev\/vda rw //' ".github/workflows/axvisor/qemu-${{ matrix.arch }}.toml"
               echo "Rootfs device configuration removed"
             fi
           done
 
-      - name: Run tests
+      - name: Run QEMU tests
+        if: matrix.type == 'qemu'
         run: |
           export RUST_LOG=debug
           cargo xtask qemu \
             --build-config configs/board/qemu-${{ matrix.arch }}.toml \
-            --qemu-config .github/workflows/qemu-${{ matrix.arch }}.toml \
+            --qemu-config .github/workflows/axvisor/qemu-${{ matrix.arch }}.toml \
             --vmconfigs ${{ matrix.vmconfigs }}
+
+      - name: Run Board tests
+        if: matrix.type == 'board'
+        run: |
+          echo $BOARD_POWER_RESET
+          export RUST_LOG=debug
+          cargo xtask uboot \
+            --build-config configs/board/${{ matrix.board }}.toml \
+            --uboot-config .github/workflows/axvisor/uboot.toml \
+            --vmconfigs ${{ matrix.vmconfigs }} \
+            --bin-dir /home/runner/tftp

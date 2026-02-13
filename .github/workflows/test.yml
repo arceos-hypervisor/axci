@@ -23,13 +23,9 @@ on:
         type: string
 
 jobs:
-  axvisor-qemu:
-    name: Axvisor (QEMU)
-    uses: ./.github/workflows/axvisor/test-qemu.yml
-
-  axvisor-board:
-    name: Axvisor (Board)
-    uses: ./.github/workflows/axvisor/test-board.yml
+  axvisor:
+    name: Axvisor
+    uses: ./.github/workflows/axvisor/test.yml
 
   starry:
     name: Starry
