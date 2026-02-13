@@ -31,6 +31,7 @@ on:
 jobs:
   # First job: prepare matrix configuration
   prepare:
+    name: Prepare target
     runs-on: ubuntu-latest
     if: ${{ !inputs.skip_build }}
     outputs:
