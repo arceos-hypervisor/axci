@@ -39,20 +39,7 @@ jobs:
       - name: Set matrix
         id: set-matrix
         run: |
-          MATRIX='[
-            {
-              "name": "axvisor",
-              "repo": {"url": "arceos-hypervisor/axvisor", "branch": "main"},
-              "build": {"command": "make build A=examples/linux", "timeout_minutes": 15},
-              "patch": {"path_template": "../component"}
-            },
-            {
-              "name": "starry",
-              "repo": {"url": "Starry-OS/StarryOS", "branch": "main"},
-              "build": {"command": "make build", "timeout_minutes": 15},
-              "patch": {"path_template": "../component"}
-            }
-          ]'
+          MATRIX='[{"name":"axvisor","repo":{"url":"arceos-hypervisor/axvisor","branch":"main"},"build":{"command":"make build A=examples/linux","timeout_minutes":15},"patch":{"path_template":"../component"}},{"name":"starry","repo":{"url":"Starry-OS/StarryOS","branch":"main"},"build":{"command":"make build","timeout_minutes":15},"patch":{"path_template":"../component"}}]'
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
 
   test:
