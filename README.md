@@ -18,37 +18,7 @@
 
 ## 快速开始
 
-### 1. 配置文件
-
-在组件仓库创建 `.github/config.json`：
-
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/arceos-hypervisor/axci/main/schema.json",
-  "targets": ["aarch64-unknown-none-softfloat"],
-  "rust_components": ["rust-src", "clippy", "rustfmt", "llvm-tools"],
-  "component": {
-    "name": "your_component",
-    "crate_name": "your_component",
-    "description": "Component description"
-  },
-  "test_targets": [
-    {
-      "name": "axvisor",
-      "repo": {
-        "url": "https://github.com/arceos-hypervisor/axvisor",
-        "branch": "main"
-      },
-      "build": {
-        "command": "make build A=examples/linux",
-        "timeout_minutes": 15
-      }
-    }
-  ]
-}
-```
-
-### 2. 创建工作流文件
+### 1. 创建工作流文件
 
 #### check.yml - 代码检查
 
@@ -147,7 +117,7 @@ jobs:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 ```
 
-### 3. 配置 Secrets
+### 2. 配置 Secrets
 
 在组件仓库的 Settings → Secrets and variables → Actions 中添加：
 
@@ -271,38 +241,7 @@ axci/
 │       ├── verify-tag.yml   # 标签验证
 │       ├── deploy.yml       # 文档部署
 │       └── release.yml      # 发布
-├── schema.json              # 配置文件 JSON Schema
 └── README.md
-```
-
-## 配置文件 Schema
-
-对于简单使用，无需配置文件。axci 提供以下默认值：
-
-| 配置项 | 默认值 |
-|--------|--------|
-| 编译目标 | `aarch64-unknown-none-softfloat` |
-| Rust 组件 | `rust-src, clippy, rustfmt, llvm-tools` |
-| 测试目标 | `axvisor, starry` |
-
-如果需要自定义，可通过 `with:` 参数覆盖。
-
-**高级配置（可选）：**
-
-如果需要更复杂的测试配置（如自定义 patch 路径、额外的测试目标等），可创建 `.github/config.json`：
-
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/arceos-hypervisor/axci/main/schema.json",
-  "test_targets": [
-    {
-      "name": "custom_target",
-      "repo": {"url": "https://github.com/org/repo", "branch": "main"},
-      "build": {"command": "make build", "timeout_minutes": 20},
-      "patch": {"path_template": "../component"}
-    }
-  ]
-}
 ```
 
 ## License
