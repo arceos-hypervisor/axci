@@ -7,6 +7,7 @@
 #   all_features: Use --all-features flag (default: true)
 #   targets: Build targets (JSON array, optional)
 #   rust_components: Rust components to install (optional)
+#   skip_build: Skip build step (default: false)
 
 name: Check
 
@@ -28,6 +29,11 @@ on:
         required: false
         default: 'rust-src, clippy, rustfmt, llvm-tools'
         type: string
+      skip_build:
+        description: 'Skip build step'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   check:
@@ -55,6 +61,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Build
+        if: ${{ inputs.skip_build != true }}
         run: |
           if [ "${{ inputs.all_features }}" = "true" ]; then
             cargo build --target ${{ matrix.target }} --all-features

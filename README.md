@@ -54,7 +54,7 @@ flowchart LR
 1. **Checkout** - 检出代码
 2. **Install Rust** - 安装 nightly 工具链及指定组件
 3. **Check code format** - `cargo fmt --all -- --check`
-4. **Build** - `cargo build --target <target> [--all-features]`
+4. **Build** - `cargo build --target <target> [--all-features]`（可设置 `skip_build: true` 跳过）
 5. **Run clippy** - `cargo clippy --target <target> [--all-features] -- -D warnings`
 6. **Build documentation** - `cargo doc --no-deps --target <target> [--all-features]`
    - 设置 `RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D missing-docs`
@@ -66,6 +66,7 @@ flowchart LR
 | `all_features` | 是否使用 --all-features 标志 | true |
 | `targets` | 编译目标 (JSON 数组) | `["aarch64-unknown-none-softfloat"]` |
 | `rust_components` | Rust 组件 (逗号分隔) | `rust-src, clippy, rustfmt, llvm-tools` |
+| `skip_build` | 是否跳过 build 步骤 | false |
 
 ### 使用
 
@@ -95,6 +96,7 @@ jobs:
       all_features: false
       targets: '["aarch64-unknown-none"]'
       rust_components: 'rust-src, clippy'
+      skip_build: true
 ```
 
 ## Deploy
