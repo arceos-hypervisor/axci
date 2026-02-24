@@ -1,6 +1,10 @@
 # Verify Tag Workflow
 # Verifies version tag consistency and branch requirements
 #
+# Supported tag formats:
+#   - Stable: v1.0.0 (must be on main/master branch)
+#   - Prerelease: v1.0.0-pre.1 or v1.0.0-preview.1 (must be on dev branch)
+#
 # Inputs:
 #   verify_branch: Verify tag is on correct branch (default: true)
 #   verify_version: Verify Cargo.toml version matches tag (default: true)
@@ -67,7 +71,7 @@ jobs:
           echo "Branches containing this tag: $BRANCHES"
           
           # Determine tag type
-          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-pre\.[0-9]+$ ]]; then
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(pre|preview)\.[0-9]+$ ]]; then
             echo "📦 Detected prerelease tag"
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
             
