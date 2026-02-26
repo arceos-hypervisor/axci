@@ -4,10 +4,10 @@
 # 此脚本可独立运行，也可被各组件调用
 #
 # 用法:
-#   ./run_tests.sh                           # 运行所有测试
-#   ./run_tests.sh --target axvisor          # 仅测试指定目标
-#   ./run_tests.sh --config /path/to/.test-config.json
-#   ./run_tests.sh --component-dir /path/to/component
+#   ./tests.sh                           # 运行所有测试
+#   ./tests.sh --target axvisor          # 仅测试指定目标
+#   ./tests.sh --config /path/to/.test-config.json
+#   ./tests.sh --component-dir /path/to/component
 #
 
 set -e
@@ -37,7 +37,8 @@ show_help() {
     cat << 'EOF'
 Hypervisor Test Framework - 本地测试脚本
 
-用法: tests.sh [选项]
+用法:
+  tests.sh [选项]
 
 选项:
   -c, --component-dir DIR    组件目录 (默认: 当前目录)
@@ -52,7 +53,7 @@ Hypervisor Test Framework - 本地测试脚本
 
 示例:
   tests.sh                                    # 在当前目录运行所有测试
-  tests.sh -c ../arm_vcpu -t axvisor          # 测试 arm_vcpu 的 axvisor 集成
+  tests.sh -c ../arm_vgic -t axvisor          # 测试 arm_vgic 的 axvisor 集成
   tests.sh --dry-run -v                       # 显示将要执行的命令
 
 EOF
@@ -112,7 +113,11 @@ log() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_debug() { [[ "$VERBOSE" == true ]] && echo -e "${CYAN}[DEBUG]${NC} $1"; }
+log_debug() { 
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${CYAN}[DEBUG]${NC} $1"
+    fi
+}
 
 error() { log_error "$1"; exit 1; }
 
@@ -148,8 +153,8 @@ check_dependencies() {
 DEFAULT_TARGETS='[
   {
     "name": "axvisor",
-    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "main"},
-    "build": {"command": "make build A=examples/linux", "timeout_minutes": 15},
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "cargo xtask defconfig qemu-aarch64 && cargo xtask build", "timeout_minutes": 15},
     "patch": {"path_template": "../component"}
   },
   {
@@ -188,12 +193,18 @@ load_config() {
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         log "加载配置: $CONFIG_FILE"
         CONFIG=$(cat "$CONFIG_FILE")
-        
         # 从配置文件获取组件信息
         local config_name=$(echo "$CONFIG" | jq -r '.component.name // empty')
         local config_crate=$(echo "$CONFIG" | jq -r '.component.crate_name // empty')
         [ -n "$config_name" ] && COMPONENT_NAME="$config_name"
         [ -n "$config_crate" ] && COMPONENT_CRATE="$config_crate"
+        
+        # 检查配置文件是否包含 test_targets
+        local has_targets=$(echo "$CONFIG" | jq 'has("test_targets")')
+        if [ "$has_targets" != "true" ]; then
+            log "配置文件不包含 test_targets，使用默认测试目标"
+            CONFIG="{\"component\":{\"name\":\"$COMPONENT_NAME\",\"crate_name\":\"$COMPONENT_CRATE\"},\"test_targets\":$DEFAULT_TARGETS}"
+        fi
     else
         log "未找到配置文件，使用默认测试目标"
         CONFIG="{\"component\":{\"name\":\"$COMPONENT_NAME\",\"crate_name\":\"$COMPONENT_CRATE\"},\"test_targets\":$DEFAULT_TARGETS}"
@@ -263,13 +274,29 @@ run_test_target() {
         if [ "$DRY_RUN" == true ]; then
             echo "[DRY-RUN] git clone --depth 1 -b $repo_branch $repo_url $test_dir"
         else
-            git clone --depth 1 -b $repo_branch "$repo_url" "$test_dir" >> "$log_file" 2>&1
+            if ! git clone --depth 1 -b $repo_branch "$repo_url" "$test_dir" >> "$log_file" 2>&1; then
+                log_error "  克隆仓库失败: $repo_url"
+                echo "failed" > "$status_file"
+                return 1
+            fi
+            # 初始化子模块
+            if [ -f "$test_dir/.gitmodules" ]; then
+                log "  初始化子模块..."
+                (cd "$test_dir" && git submodule update --init --recursive) >> "$log_file" 2>&1 || true
+            fi
         fi
     else
         log "  更新仓库..."
         if [ "$DRY_RUN" != true ]; then
             (cd "$test_dir" && git pull) >> "$log_file" 2>&1 || true
         fi
+    fi
+    
+    # 确保仓库目录存在
+    if [ ! -d "$test_dir" ]; then
+        log_error "  仓库目录不存在: $test_dir"
+        echo "failed" > "$status_file"
+        return 1
     fi
     
     # 应用 patch - 与 CI 逻辑保持一致
@@ -282,11 +309,15 @@ run_test_target() {
     
     # 转换为绝对路径
     if [[ "$patch_path" == ".."* ]]; then
-        patch_path="$(cd "$test_dir/$patch_path" 2>/dev/null && pwd)" || {
-            log_error "无法解析 patch 路径: $test_dir/$patch_path"
-            echo "failed" > "$status_file"
-            return 1
-        }
+        # 尝试从 test_dir 解析相对路径
+        local resolved_path="$test_dir/$patch_path"
+        if [ -d "$resolved_path" ]; then
+            patch_path="$(cd "$resolved_path" && pwd)"
+        else
+            # 如果相对路径解析失败，直接使用组件目录的绝对路径
+            log "  相对路径 $patch_path 不存在，使用组件目录: $COMPONENT_DIR"
+            patch_path="$COMPONENT_DIR"
+        fi
     fi
     
     log "  应用组件 patch (section: $patch_section, path: $patch_path)..."
@@ -295,14 +326,25 @@ run_test_target() {
     else
         cd "$test_dir"
         
-        # 检查是否已添加 patch
-        if ! grep -q "\[$COMPONENT_CRATE\]" Cargo.toml 2>/dev/null; then
-            cat >> Cargo.toml << EOF
+        # 检查是否已添加该组件的 patch
+        if grep -q "^$COMPONENT_CRATE\s*=" Cargo.toml 2>/dev/null; then
+            log "  组件 $COMPONENT_CRATE 已在 patch 中"
+        else
+            # 检查是否已存在 [patch.$patch_section] section
+            if grep -q "^\[patch\.$patch_section\]" Cargo.toml 2>/dev/null; then
+                # 在现有的 section 后添加
+                # 使用 sed 在匹配行后插入
+                sed -i "/^\[patch\.$patch_section\]/a $COMPONENT_CRATE = { path = \"$patch_path\" }" Cargo.toml
+                log_debug "已在现有 patch section 中添加组件"
+            else
+                # 创建新的 section
+                cat >> Cargo.toml << EOF
 
 [patch.$patch_section]
 $COMPONENT_CRATE = { path = "$patch_path" }
 EOF
-            log_debug "已添加 patch 到 Cargo.toml"
+                log_debug "已创建新的 patch section 并添加组件"
+            fi
         fi
     fi
     
@@ -394,7 +436,7 @@ generate_report() {
     cat > "$report_file" << EOF
 # 测试报告
 
-**组件**: $COMPONENT_NAME  
+**组件**: $COMPONENT_NAME 
 **时间**: $(date '+%Y-%m-%d %H:%M:%S')  
 **配置**: $CONFIG_FILE
 
@@ -449,14 +491,23 @@ main() {
     
     check_dependencies
     load_config
+    
+    log "配置加载完成"
+    log "组件: $COMPONENT_NAME ($COMPONENT_CRATE)"
+    
     setup_output
+    
+    log "输出目录: $OUTPUT_DIR"
     
     if [ "$DRY_RUN" == true ]; then
         log_warn "DRY RUN 模式 - 不会执行实际操作"
     fi
     
+    # 临时禁用 set -e 以捕获 run_all_tests 的返回值
+    set +e
     run_all_tests
     local result=$?
+    set -e
     
     cleanup
     
