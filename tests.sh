@@ -326,8 +326,10 @@ run_test_target() {
     else
         cd "$test_dir"
         
-        # 检查是否已添加该组件的 patch
-        if grep -q "^$COMPONENT_CRATE\s*=" Cargo.toml 2>/dev/null; then
+        # 检查是否已添加该组件的 patch（只在 [patch.*] section 中检查）
+        # 使用 awk 提取所有 [patch.*] section 的内容并检查
+        local already_patched=$(awk '/^\[patch\./,/^\[/ {print}' Cargo.toml 2>/dev/null | grep -q "^$COMPONENT_CRATE\s*=" && echo "yes" || echo "no")
+        if [ "$already_patched" == "yes" ]; then
             log "  组件 $COMPONENT_CRATE 已在 patch 中"
         else
             # 检查是否已存在 [patch.$patch_section] section
