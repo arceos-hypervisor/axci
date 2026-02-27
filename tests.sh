@@ -226,9 +226,7 @@ DEFAULT_TARGETS='[
     "arch": "riscv64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 30},
-    "test": {
-      "command": "scripts/ci-test.py"
-    },
+    "test": {},
     "patch": {"path_template": "../component"}
   },
   {
@@ -237,9 +235,7 @@ DEFAULT_TARGETS='[
     "arch": "loongarch64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 30},
-    "test": {
-      "command": "scripts/ci-test.py"
-    },
+    "test": {},
     "patch": {"path_template": "../component"}
   },
   {
@@ -248,9 +244,7 @@ DEFAULT_TARGETS='[
     "arch": "aarch64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 30},
-    "test": {
-      "command": "scripts/ci-test.py"
-    },
+    "test": {},
     "patch": {"path_template": "../component"}
   },
   {
@@ -259,9 +253,7 @@ DEFAULT_TARGETS='[
     "arch": "x86_64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 30},
-    "test": {
-      "command": "scripts/ci-test.py"
-    },
+    "test": {},
     "patch": {"path_template": "../component"}
   },
   {
@@ -920,7 +912,7 @@ EOF
         elif [[ "$target_name" == starry-* ]]; then
             # Starry 测试
             local arch=$(echo "$target_config" | jq -r '.arch')
-            full_test_cmd="$test_cmd $arch"
+            full_test_cmd="make ARCH=$arch run"
         fi
 
         if [ "$DRY_RUN" == true ]; then
