@@ -52,6 +52,7 @@ Hypervisor Test Framework - 本地测试脚本
   -h, --help                 显示此帮助
 
 测试目标:
+  list                       列出所有可用的测试用例
   all                        运行所有测试
   axvisor-qemu               运行所有 axvisor QEMU 测试
   axvisor-board              运行所有 axvisor Board 测试
@@ -387,7 +388,7 @@ setup_output() {
 # 获取要测试的目标
 get_test_targets() {
     local targets=()
-    
+
     if [ "$TEST_TARGET" == "all" ]; then
         # 从配置获取所有目标
         local count=$(echo "$CONFIG" | jq '.test_targets | length')
@@ -425,7 +426,7 @@ get_test_targets() {
         # 具体目标名称
         targets+=("$TEST_TARGET")
     fi
-    
+
     echo "${targets[@]}"
 }
 
@@ -1066,34 +1067,48 @@ cleanup() {
 # 主函数
 main() {
     parse_args "$@"
-    
+
     echo -e "${CYAN}════════════════════════════════════════${NC}"
     echo -e "${CYAN}  Hypervisor Test Framework${NC}"
     echo -e "${CYAN}════════════════════════════════════════${NC}"
     echo ""
-    
+
     check_dependencies
     load_config
-    
+
     log "配置加载完成"
     log "组件: $COMPONENT_NAME ($COMPONENT_CRATE)"
-    
+
+    # 处理 list 命令
+    if [ "$TEST_TARGET" == "list" ]; then
+        echo ""
+        echo "所有可用的测试目标:"
+        echo ""
+        local count=$(echo "$CONFIG" | jq '.test_targets | length')
+        for ((i=0; i<count; i++)); do
+            local name=$(echo "$CONFIG" | jq -r ".test_targets[$i].name")
+            echo "  $name"
+        done
+        echo ""
+        exit 0
+    fi
+
     setup_output
-    
+
     log "输出目录: $OUTPUT_DIR"
-    
+
     if [ "$DRY_RUN" == true ]; then
         log_warn "DRY RUN 模式 - 不会执行实际操作"
     fi
-    
+
     # 临时禁用 set -e 以捕获 run_all_tests 的返回值
     set +e
     run_all_tests
     local result=$?
     set -e
-    
+
     cleanup
-    
+
     echo ""
     if [ $result -eq 0 ]; then
         log_success "所有测试通过!"
@@ -1102,7 +1117,7 @@ main() {
     else
         log_error "部分测试失败"
     fi
-    
+
     exit $result
 }
 
