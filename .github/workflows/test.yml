@@ -124,11 +124,17 @@ jobs:
         working-directory: axvisor
         run: |
           CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          echo "" >> Cargo.toml
-          echo "[patch.crates-io]" >> Cargo.toml
-          echo "$CRATE_NAME = { path = \"../component\" }" >> Cargo.toml
+          PATCH_LINE="$CRATE_NAME = { path = \"../component\" }"
+          # Check if [patch.crates-io] already exists
+          if grep -q '^\[patch.crates-io\]' Cargo.toml; then
+            sed -i "/^\[patch.crates-io\]/a $PATCH_LINE" Cargo.toml
+          else
+            echo "" >> Cargo.toml
+            echo "[patch.crates-io]" >> Cargo.toml
+            echo "$PATCH_LINE" >> Cargo.toml
+          fi
           echo "Applied patch:"
-          tail -3 Cargo.toml
+          tail -10 Cargo.toml
 
       - name: Install dependencies
         if: steps.filter.outputs.should_run == 'true'
@@ -265,11 +271,17 @@ jobs:
         working-directory: starry
         run: |
           CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          echo "" >> Cargo.toml
-          echo "[patch.crates-io]" >> Cargo.toml
-          echo "$CRATE_NAME = { path = \"../component\" }" >> Cargo.toml
+          PATCH_LINE="$CRATE_NAME = { path = \"../component\" }"
+          # Check if [patch.crates-io] already exists
+          if grep -q '^\[patch.crates-io\]' Cargo.toml; then
+            sed -i "/^\[patch.crates-io\]/a $PATCH_LINE" Cargo.toml
+          else
+            echo "" >> Cargo.toml
+            echo "[patch.crates-io]" >> Cargo.toml
+            echo "$PATCH_LINE" >> Cargo.toml
+          fi
           echo "Applied patch:"
-          tail -3 Cargo.toml
+          tail -10 Cargo.toml
 
       - uses: Swatinem/rust-cache@v2
         if: steps.filter.outputs.should_run == 'true'
