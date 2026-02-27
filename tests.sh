@@ -54,10 +54,15 @@ Hypervisor Test Framework - 本地测试脚本
 测试目标:
   all                        运行所有测试
   axvisor-qemu               运行所有 axvisor QEMU 测试
+  axvisor-board              运行所有 axvisor Board 测试
   starry                     运行所有 starry 测试
   axvisor-qemu-aarch64-arceos     测试 axvisor 在 QEMU aarch64 上的 ArceOS 镜像
   axvisor-qemu-aarch64-linux      测试 axvisor 在 QEMU aarch64 上的 Linux 镜像
   axvisor-qemu-x86_64-nimbos      测试 axvisor 在 QEMU x86_64 上的 NimbOS 镜像
+  axvisor-board-phytiumpi-arceos  测试 axvisor 在 phytiumpi 开发板上的 ArceOS 镜像
+  axvisor-board-phytiumpi-linux   测试 axvisor 在 phytiumpi 开发板上的 Linux 镜像
+  axvisor-board-roc-rk3568-pc-arceos  测试 axvisor 在 roc-rk3568-pc 开发板上的 ArceOS 镜像
+  axvisor-board-roc-rk3568-pc-linux   测试 axvisor 在 roc-rk3568-pc 开发板上的 Linux 镜像
   starry-riscv64             测试 starry 在 riscv64 架构下
   starry-loongarch64         测试 starry 在 loongarch64 架构下
   starry-aarch64             测试 starry 在 aarch64 架构下
@@ -70,7 +75,9 @@ Hypervisor Test Framework - 本地测试脚本
 示例:
   tests.sh                                    # 在当前目录运行所有测试
   tests.sh -t axvisor-qemu                    # 仅运行 axvisor QEMU 测试
+  tests.sh -t axvisor-board                   # 仅运行 axvisor Board 测试
   tests.sh -t starry-aarch64                  # 仅运行 starry aarch64 测试
+  tests.sh -t axvisor-board-phytiumpi-arceos  # 仅运行 phytiumpi ArceOS 测试
   tests.sh --dry-run -v                       # 显示将要执行的命令
 
 EOF
@@ -254,6 +261,74 @@ DEFAULT_TARGETS='[
     "build": {"command": "make build", "timeout_minutes": 30},
     "test": {
       "command": "scripts/ci-test.py"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "axvisor-board-phytiumpi-arceos",
+    "type": "board",
+    "arch": "aarch64",
+    "board": "phytiumpi",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask uboot",
+      "build_config": "configs/board/phytiumpi.toml",
+      "uboot_config": ".github/workflows/uboot.toml",
+      "vmconfigs": "configs/vms/arceos-aarch64-e2000-smp1.toml",
+      "vmimage_name": "phytiumpi_arceos",
+      "bin_dir": "/tmp/tftp"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "axvisor-board-phytiumpi-linux",
+    "type": "board",
+    "arch": "aarch64",
+    "board": "phytiumpi",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask uboot",
+      "build_config": "configs/board/phytiumpi.toml",
+      "uboot_config": ".github/workflows/uboot.toml",
+      "vmconfigs": "configs/vms/linux-aarch64-e2000-smp1.toml",
+      "vmimage_name": "phytiumpi_linux",
+      "bin_dir": "/tmp/tftp"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "axvisor-board-roc-rk3568-pc-arceos",
+    "type": "board",
+    "arch": "aarch64",
+    "board": "roc-rk3568-pc",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask uboot",
+      "build_config": "configs/board/roc-rk3568-pc.toml",
+      "uboot_config": ".github/workflows/uboot.toml",
+      "vmconfigs": "configs/vms/arceos-aarch64-rk3568-smp1.toml",
+      "vmimage_name": "roc-rk3568-pc_arceos",
+      "bin_dir": "/tmp/tftp"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "axvisor-board-roc-rk3568-pc-linux",
+    "type": "board",
+    "arch": "aarch64",
+    "board": "roc-rk3568-pc",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask uboot",
+      "build_config": "configs/board/roc-rk3568-pc.toml",
+      "uboot_config": ".github/workflows/uboot.toml",
+      "vmconfigs": "configs/vms/linux-aarch64-rk3568-smp1.toml",
+      "vmimage_name": "roc-rk3568-pc_linux",
+      "bin_dir": "/tmp/tftp"
     },
     "patch": {"path_template": "../component"}
   }
@@ -484,12 +559,34 @@ EOF
     # 执行构建
     if [ -n "$build_cmd" ]; then
         log "  构建... ($build_cmd, timeout: ${timeout_min}m)"
+        
         if [ "$DRY_RUN" == true ]; then
             echo "[DRY-RUN] cd $test_dir && timeout ${timeout_min}m $build_cmd"
         else
             cd "$test_dir"
-            if timeout "${timeout_min}m" sh -c "$build_cmd" >> "$log_file" 2>&1; then
+            # 为 starry 测试准备构建命令
+            local actual_build_cmd="$build_cmd"
+            if [[ "$target_name" == starry-* ]]; then
+                local arch=$(echo "$target_config" | jq -r '.arch')
+                log "  构建架构: $arch"
+                # 将 ARCH 作为 make 参数传递，而不是环境变量
+                actual_build_cmd="$build_cmd ARCH=$arch"
+            fi
+            
+            if timeout "${timeout_min}m" sh -c "$actual_build_cmd" >> "$log_file" 2>&1; then
                 log_success "  构建成功: $target_name"
+                
+                # 为 starry 测试准备 rootfs
+                if [[ "$target_name" == starry-* ]]; then
+                    log "  准备 rootfs..."
+                    local arch=$(echo "$target_config" | jq -r '.arch')
+                    # 将 ARCH 作为 make 参数传递，而不是环境变量
+                    if timeout "${timeout_min}m" sh -c "make rootfs ARCH=$arch" >> "$log_file" 2>&1; then
+                        log_success "  Rootfs 准备成功"
+                    else
+                        log_warn "  Rootfs 准备失败，继续测试（可能影响测试结果）"
+                    fi
+                fi
             else
                 local exit_code=$?
                 if [ $exit_code -eq 124 ]; then
@@ -512,14 +609,99 @@ EOF
         
         log "  运行测试... ($test_cmd, timeout: ${test_timeout}m)"
         
-        # 检查是否为开发板测试
+        # Board 测试前准备
         if [ "$test_type" == "board" ]; then
-            local board_name=$(echo "$target_config" | jq -r '.board')
-            log_warn "  开发板测试需要真实硬件: $board_name"
-            log_warn "  跳过开发板测试（本地环境无硬件）"
-            echo "skipped" > "$status_file"
-            cd "$COMPONENT_DIR"
-            return 2  # 返回 2 表示跳过
+            # 确保安装 ostool
+            if ! command -v ostool &> /dev/null; then
+                log "  安装 ostool..."
+                cargo +stable install ostool --version ^0.8
+            fi
+            
+            # 创建 TFTP 目录
+            local bin_dir=$(echo "$target_config" | jq -r '.test.bin_dir // "/tmp/tftp"')
+            mkdir -p "$bin_dir"
+            log "  TFTP 目录已准备: $bin_dir"
+            
+            # 下载镜像和配置（类似 QEMU 测试）
+            local vmconfigs=$(echo "$target_config" | jq -r '.test.vmconfigs')
+            local vmimage_name=$(echo "$target_config" | jq -r '.test.vmimage_name // empty')
+            
+            if [ -n "$vmimage_name" ]; then
+                log "  下载测试镜像..."
+                
+                # 创建镜像目录
+                local IMAGE_DIR="/tmp/.axvisor-images"
+                mkdir -p "$IMAGE_DIR"
+                
+                # 检查并下载镜像
+                IFS=',' read -ra CONFIGS <<< "$vmconfigs"
+                IFS=',' read -ra IMAGES <<< "$vmimage_name"
+                
+                for i in "${!CONFIGS[@]}"; do
+                    img="${IMAGES[$i]}"
+                    img=$(echo "$img" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    config="${CONFIGS[$i]}"
+                    config=$(echo "$config" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    
+                    # 检查镜像是否存在
+                    local img_path="${IMAGE_DIR}/${img}"
+                    if [ -d "$img_path" ]; then
+                        log "  镜像已存在: $img_path"
+                    else
+                        log "  镜像不存在，开始下载: $img"
+                        if [ -f "$test_dir/$config" ]; then
+                            cd "$test_dir"
+                            if cargo xtask image download $img >> "$log_file" 2>&1; then
+                                log_success "  镜像下载成功: $img"
+                            else
+                                log_error "  镜像下载失败: $img"
+                                echo "failed" > "$status_file"
+                                cd "$COMPONENT_DIR"
+                                return 1
+                            fi
+                        else
+                            log_warn "  配置文件不存在: $config"
+                        fi
+                    fi
+                    
+                    # 更新配置文件
+                    if [ -f "$test_dir/$config" ]; then
+                        cd "$test_dir"
+                        
+                        # 获取 image_location
+                        local image_location=$(sed -n 's/^image_location[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$config")
+                        local board_name=$(echo "$target_config" | jq -r '.board')
+                        
+                        # Board 测试的内核文件名（与 board 同名，例如 phytiumpi）
+                        local kernel_name="${board_name}"
+                        
+                        case "$image_location" in
+                        "fs")
+                            log "  将配置从文件系统模式改为内存模式"
+                            # 修改 image_location 为 memory
+                            sed -i 's|^image_location[[:space:]]*=.*|image_location = "memory"|' "$config"
+                            # 更新 kernel_path 指向镜像目录中的内核文件
+                            sed -i 's|^kernel_path[[:space:]]*=.*|kernel_path = "'"${IMAGE_DIR}"'/'"$img"'/'"$kernel_name"'"|' "$config"
+                            log "  已更新 kernel_path: ${IMAGE_DIR}/${img}/${kernel_name}"
+                            ;;
+                        "memory")
+                            log "  内存存储模式 - 更新 kernel_path"
+                            sed -i 's|^kernel_path[[:space:]]*=.*|kernel_path = "'"${IMAGE_DIR}"'/'"$img"'/'"$kernel_name"'"|' "$config"
+                            log "  已更新 kernel_path: ${IMAGE_DIR}/${img}/${kernel_name}"
+                            ;;
+                        *)
+                            log "  未知的 image_location: $image_location，修改为 memory"
+                            sed -i 's|^image_location[[:space:]]*=.*|image_location = "memory"|' "$config"
+                            sed -i 's|^kernel_path[[:space:]]*=.*|kernel_path = "'"${IMAGE_DIR}"'/'"$img"'/'"$kernel_name"'"|' "$config"
+                            log "  已更新 kernel_path: ${IMAGE_DIR}/${img}/${kernel_name}"
+                            ;;
+                        esac
+                    else
+                        log_warn "  配置文件不存在: $config"
+                    fi
+                done
+                cd "$COMPONENT_DIR"
+            fi
         fi
         
         # 下载镜像和配置（仅适用于 axvisor QEMU 测试）
@@ -617,24 +799,136 @@ EOF
         
         # 准备测试命令
         local full_test_cmd=""
-        if [[ "$target_name" == axvisor-* ]]; then
+        if [[ "$target_name" == axvisor-qemu-* ]]; then
             # Axvisor QEMU 测试
             local build_config=$(echo "$target_config" | jq -r '.test.build_config')
             local qemu_config=$(echo "$target_config" | jq -r '.test.qemu_config')
             local vmconfigs=$(echo "$target_config" | jq -r '.test.vmconfigs')
             full_test_cmd="$test_cmd --build-config $build_config --qemu-config $qemu_config --vmconfigs $vmconfigs"
+        elif [[ "$target_name" == axvisor-board-* ]]; then
+            # Axvisor Board 测试
+            local build_config=$(echo "$target_config" | jq -r '.test.build_config')
+            local uboot_config=$(echo "$target_config" | jq -r '.test.uboot_config')
+            local vmconfigs=$(echo "$target_config" | jq -r '.test.vmconfigs')
+            local bin_dir=$(echo "$target_config" | jq -r '.test.bin_dir // "/tmp/tftp"')
+
+            cd "$test_dir"
+
+            # 步骤 1: 执行 defconfig 生成 .build.toml
+            log "  生成构建配置..."
+            local board_name=$(echo "$target_config" | jq -r '.board')
+
+            # 获取客户机配置文件列表
+            # vmconfigs 是逗号分隔的列表，例如: "configs/vms/arceos-aarch64-e2000-smp1.toml"
+            # 需要解析这些配置文件路径并配置到 vm_configs
+            local vm_configs_json="["
+            local vm_configs=$(echo "$target_config" | jq -r '.test.vmconfigs')
+            IFS=',' read -ra CONFIGS <<< "$vmconfigs"
+            for i in "${!CONFIGS[@]}"; do
+                config="${CONFIGS[$i]}"
+                config=$(echo "$config" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                if [ $i -gt 0 ]; then
+                    vm_configs_json+=", "
+                fi
+                vm_configs_json+='"'"$config"'"'
+            done
+            vm_configs_json+="]"
+
+            log "  执行 cargo xtask defconfig $board_name..."
+            if cargo xtask defconfig "$board_name" >> "$log_file" 2>&1; then
+                log_success "  Defconfig 成功"
+            else
+                log_error "  Defconfig 失败"
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
+            fi
+
+            # 步骤 2: 修改 .build.toml 文件
+            log "  步骤 2: 更新 .build.toml 配置..."
+            local build_toml=".build.toml"
+
+            if [ -f "$build_toml" ]; then
+                # 使用 awk 来替换 features 和 vm_configs
+                awk -v vm_configs="$vm_configs_json" '
+                    /^features = \[/ { in_features=1; print "features = ["; print "    # \"ept-level-4\","; print "    \"dyn-plat\","; print "    \"axstd/bus-mmio\","; print "]"; next }
+                    in_features { if(/^\]/) { in_features=0 } next }
+                    /^vm_configs = \[/ { in_vm=1; next }
+                    in_vm { if(/^\]/) { in_vm=0 } next }
+                    /^log = / { print $0 "\nvm_configs = " vm_configs; next }
+                    { print }
+                ' "$build_toml" > "$build_toml.tmp" && mv "$build_toml.tmp" "$build_toml"
+
+                log_success "  .build.toml 更新完成"
+                log_debug "    - Features 已更新"
+                log_debug "    - vm_configs: $vm_configs_json"
+            else
+                log_error "  未找到 .build.toml 文件"
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
+            fi
+
+            # 步骤 3: 检查 .uboot.toml 是否存在，不存在则提示用户输入
+            log "  步骤 3: 检查 U-Boot 配置..."
+            local uboot_config_file=".uboot.toml"
+
+            if [ ! -f "$uboot_config_file" ]; then
+                # 生成交互式配置文件
+                log ""
+                log "  ======== 配置 U-Boot 参数 ======== "
+                log ""
+
+                # 提示用户输入 serial
+                echo -e "${CYAN}请输入串口设备路径 (例如: /dev/ttyUSB0):${NC}"
+                read -p "> " serial_input
+                serial_input="${serial_input:-/dev/ttyUSB0}"
+
+                # 提示用户输入 baud_rate
+                echo ""
+                echo -e "${CYAN}请输入波特率 (例如: 115200):${NC}"
+                read -p "> " baud_rate_input
+                baud_rate_input="${baud_rate_input:-115200}"
+
+                # 提示用户输入 dtb_file
+                echo ""
+                echo -e "${CYAN}请输入 DTB 文件路径 (例如: board/orangepi-5-plus.dtb):${NC}"
+                read -p "> " dtb_file_input
+                dtb_file_input="${dtb_file_input:-board/orangepi-5-plus.dtb}"
+
+                # 生成 .uboot.toml 文件
+                cat > "$uboot_config_file" << EOF
+serial = "$serial_input"
+baud_rate = "$baud_rate_input"
+success_regex = []
+fail_regex = []
+dtb_file = "$dtb_file_input"
+EOF
+
+                log ""
+                log "  U-Boot 配置已保存到: $uboot_config_file"
+                log "  - 串口: $serial_input"
+                log "  - 波特率: $baud_rate_input"
+                log "  - DTB文件: $dtb_file_input"
+                log ""
+            else
+                log "  使用已存在的配置文件: $uboot_config_file"
+            fi
+
+            # 步骤 4: 执行 cargo xtask uboot
+            full_test_cmd="$test_cmd"
         elif [[ "$target_name" == starry-* ]]; then
             # Starry 测试
             local arch=$(echo "$target_config" | jq -r '.arch')
-            full_test_cmd="ARCH=$arch $test_cmd $arch"
+            full_test_cmd="$test_cmd $arch"
         fi
-        
+
         if [ "$DRY_RUN" == true ]; then
             echo "[DRY-RUN] cd $test_dir && timeout ${test_timeout}m $full_test_cmd"
         else
             cd "$test_dir"
             export RUST_LOG=debug
-            if timeout "${test_timeout}m" sh -c "$full_test_cmd" >> "$log_file" 2>&1; then
+            if $full_test_cmd 2>&1 | tee -a "$log_file"; then
                 log_success "  测试成功: $target_name"
                 echo "passed" > "$status_file"
                 cd "$COMPONENT_DIR"
