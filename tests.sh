@@ -43,7 +43,7 @@ Hypervisor Test Framework - 本地测试脚本
 选项:
   -c, --component-dir DIR    组件目录 (默认: 当前目录)
   -f, --config FILE          配置文件路径 (可选，默认使用内置测试目标)
-  -t, --target TARGET        测试目标: all 或指定名称 (默认: all)
+  -t, --target TARGET        测试目标: all, axvisor-qemu, starry, 或具体目标名 (默认: all)
   -o, --output DIR           输出目录 (默认: COMPONENT_DIR/test-results)
   -v, --verbose              详细输出
   --no-cleanup               不清理临时文件
@@ -51,9 +51,26 @@ Hypervisor Test Framework - 本地测试脚本
   --sequential               顺序执行测试 (不并行)
   -h, --help                 显示此帮助
 
+测试目标:
+  all                        运行所有测试
+  axvisor-qemu               运行所有 axvisor QEMU 测试
+  starry                     运行所有 starry 测试
+  axvisor-qemu-aarch64-arceos     测试 axvisor 在 QEMU aarch64 上的 ArceOS 镜像
+  axvisor-qemu-aarch64-linux      测试 axvisor 在 QEMU aarch64 上的 Linux 镜像
+  axvisor-qemu-x86_64-nimbos      测试 axvisor 在 QEMU x86_64 上的 NimbOS 镜像
+  starry-riscv64             测试 starry 在 riscv64 架构下
+  starry-loongarch64         测试 starry 在 loongarch64 架构下
+  starry-aarch64             测试 starry 在 aarch64 架构下
+  starry-x86_64              测试 starry 在 x86_64 架构下
+
+镜像下载:
+  镜像将从 https://github.com/arceos-hypervisor/axvisor-guest/releases/v0.0.22 自动下载
+  存储位置: /tmp/.axvisor-images
+
 示例:
   tests.sh                                    # 在当前目录运行所有测试
-  tests.sh -c ../arm_vgic -t axvisor          # 测试 arm_vgic 的 axvisor 集成
+  tests.sh -t axvisor-qemu                    # 仅运行 axvisor QEMU 测试
+  tests.sh -t starry-aarch64                  # 仅运行 starry aarch64 测试
   tests.sh --dry-run -v                       # 显示将要执行的命令
 
 EOF
@@ -152,15 +169,92 @@ check_dependencies() {
 # 默认测试目标（与 .github/workflows/test.yml 保持一致）
 DEFAULT_TARGETS='[
   {
-    "name": "axvisor",
+    "name": "axvisor-qemu-aarch64-arceos",
+    "type": "qemu",
+    "arch": "aarch64",
     "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
-    "build": {"command": "cargo xtask defconfig qemu-aarch64 && cargo xtask build", "timeout_minutes": 15},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask qemu",
+      "build_config": "configs/board/qemu-aarch64.toml",
+      "qemu_config": ".github/workflows/qemu-aarch64.toml",
+      "vmconfigs": "configs/vms/arceos-aarch64-qemu-smp1.toml",
+      "vmimage_name": "qemu_aarch64_arceos,qemu_aarch64_arceos"
+    },
     "patch": {"path_template": "../component"}
   },
   {
-    "name": "starry",
+    "name": "axvisor-qemu-aarch64-linux",
+    "type": "qemu",
+    "arch": "aarch64",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask qemu",
+      "build_config": "configs/board/qemu-aarch64.toml",
+      "qemu_config": ".github/workflows/qemu-aarch64.toml",
+      "vmconfigs": "configs/vms/linux-aarch64-qemu-smp1.toml",
+      "vmimage_name": "qemu_aarch64_linux"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "axvisor-qemu-x86_64-nimbos",
+    "type": "qemu",
+    "arch": "x86_64",
+    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "build": {"command": "", "timeout_minutes": 15},
+    "test": {
+      "command": "cargo xtask qemu",
+      "build_config": "configs/board/qemu-x86_64.toml",
+      "qemu_config": ".github/workflows/qemu-x86_64.toml",
+      "vmconfigs": "configs/vms/nimbos-x86_64-qemu-smp1.toml",
+      "vmimage_name": "qemu_x86_64_nimbos"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "starry-riscv64",
+    "type": "qemu",
+    "arch": "riscv64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-    "build": {"command": "make build", "timeout_minutes": 15},
+    "build": {"command": "make build", "timeout_minutes": 30},
+    "test": {
+      "command": "scripts/ci-test.py"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "starry-loongarch64",
+    "type": "qemu",
+    "arch": "loongarch64",
+    "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
+    "build": {"command": "make build", "timeout_minutes": 30},
+    "test": {
+      "command": "scripts/ci-test.py"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "starry-aarch64",
+    "type": "qemu",
+    "arch": "aarch64",
+    "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
+    "build": {"command": "make build", "timeout_minutes": 30},
+    "test": {
+      "command": "scripts/ci-test.py"
+    },
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "starry-x86_64",
+    "type": "qemu",
+    "arch": "x86_64",
+    "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
+    "build": {"command": "make build", "timeout_minutes": 30},
+    "test": {
+      "command": "scripts/ci-test.py"
+    },
     "patch": {"path_template": "../component"}
   }
 ]'
@@ -233,7 +327,35 @@ get_test_targets() {
         for ((i=0; i<count; i++)); do
             targets+=("$(echo "$CONFIG" | jq -r ".test_targets[$i].name")")
         done
+    elif [[ "$TEST_TARGET" == axvisor-qemu ]]; then
+        # 运行所有 axvisor QEMU 测试
+        local count=$(echo "$CONFIG" | jq '.test_targets | length')
+        for ((i=0; i<count; i++)); do
+            local name=$(echo "$CONFIG" | jq -r ".test_targets[$i].name")
+            if [[ "$name" == axvisor-qemu-* ]]; then
+                targets+=("$name")
+            fi
+        done
+    elif [[ "$TEST_TARGET" == axvisor-board ]]; then
+        # 运行所有 axvisor 开发板测试
+        local count=$(echo "$CONFIG" | jq '.test_targets | length')
+        for ((i=0; i<count; i++)); do
+            local name=$(echo "$CONFIG" | jq -r ".test_targets[$i].name")
+            if [[ "$name" == axvisor-board-* ]]; then
+                targets+=("$name")
+            fi
+        done
+    elif [[ "$TEST_TARGET" == starry ]]; then
+        # 运行所有 starry 测试
+        local count=$(echo "$CONFIG" | jq '.test_targets | length')
+        for ((i=0; i<count; i++)); do
+            local name=$(echo "$CONFIG" | jq -r ".test_targets[$i].name")
+            if [[ "$name" == starry-* ]]; then
+                targets+=("$name")
+            fi
+        done
     else
+        # 具体目标名称
         targets+=("$TEST_TARGET")
     fi
     
@@ -258,10 +380,12 @@ run_test_target() {
     
     local repo_url=$(echo "$target_config" | jq -r '.repo.url')
     local repo_branch=$(echo "$target_config" | jq -r '.repo.branch // "main"')
+    local test_type=$(echo "$target_config" | jq -r '.type // "qemu"')
     local build_cmd=$(echo "$target_config" | jq -r '.build.command')
     local timeout_min=$(echo "$target_config" | jq -r '.build.timeout_minutes // 15')
     
     log_debug "  仓库: $repo_url ($repo_branch)"
+    log_debug "  类型: $test_type"
     log_debug "  构建: $build_cmd"
     log_debug "  超时: ${timeout_min}分钟"
     
@@ -292,11 +416,18 @@ run_test_target() {
         fi
     fi
     
-    # 确保仓库目录存在
-    if [ ! -d "$test_dir" ]; then
+    # 确保仓库目录存在 (dry-run 模式下跳过)
+    if [ "$DRY_RUN" != true ] && [ ! -d "$test_dir" ]; then
         log_error "  仓库目录不存在: $test_dir"
         echo "failed" > "$status_file"
         return 1
+    fi
+    
+    # dry-run 模式下跳过后续操作
+    if [ "$DRY_RUN" == true ]; then
+        log "  DRY RUN: 跳过 patch、构建和测试"
+        echo "skipped" > "$status_file"
+        return 2
     fi
     
     # 应用 patch - 与 CI 逻辑保持一致
@@ -351,27 +482,181 @@ EOF
     fi
     
     # 执行构建
-    log "  构建... ($build_cmd, timeout: ${timeout_min}m)"
-    if [ "$DRY_RUN" == true ]; then
-        echo "[DRY-RUN] cd $test_dir && timeout ${timeout_min}m $build_cmd"
-    else
-        cd "$test_dir"
-        if timeout "${timeout_min}m" sh -c "$build_cmd" >> "$log_file" 2>&1; then
-            log_success "  构建成功: $target_name"
-            echo "passed" > "$status_file"
-            cd "$COMPONENT_DIR"
-            return 0
+    if [ -n "$build_cmd" ]; then
+        log "  构建... ($build_cmd, timeout: ${timeout_min}m)"
+        if [ "$DRY_RUN" == true ]; then
+            echo "[DRY-RUN] cd $test_dir && timeout ${timeout_min}m $build_cmd"
         else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                log_error "  构建超时: $target_name"
+            cd "$test_dir"
+            if timeout "${timeout_min}m" sh -c "$build_cmd" >> "$log_file" 2>&1; then
+                log_success "  构建成功: $target_name"
             else
-                log_error "  构建失败: $target_name (退出码: $exit_code)"
+                local exit_code=$?
+                if [ $exit_code -eq 124 ]; then
+                    log_error "  构建超时: $target_name"
+                else
+                    log_error "  构建失败: $target_name (退出码: $exit_code)"
+                fi
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
             fi
-            echo "failed" > "$status_file"
-            cd "$COMPONENT_DIR"
-            return 1
         fi
+    fi
+    
+    # 执行测试（如果有测试配置）
+    local has_test=$(echo "$target_config" | jq 'has("test")')
+    if [ "$has_test" == "true" ]; then
+        local test_cmd=$(echo "$target_config" | jq -r '.test.command')
+        local test_timeout=$(echo "$target_config" | jq -r '.test.timeout_minutes // 30')
+        
+        log "  运行测试... ($test_cmd, timeout: ${test_timeout}m)"
+        
+        # 检查是否为开发板测试
+        if [ "$test_type" == "board" ]; then
+            local board_name=$(echo "$target_config" | jq -r '.board')
+            log_warn "  开发板测试需要真实硬件: $board_name"
+            log_warn "  跳过开发板测试（本地环境无硬件）"
+            echo "skipped" > "$status_file"
+            cd "$COMPONENT_DIR"
+            return 2  # 返回 2 表示跳过
+        fi
+        
+        # 下载镜像和配置（仅适用于 axvisor QEMU 测试）
+        if [[ "$target_name" == axvisor-qemu-* ]]; then
+            local arch=$(echo "$target_config" | jq -r '.arch')
+            local vmconfigs=$(echo "$target_config" | jq -r '.test.vmconfigs')
+            local vmimage_name=$(echo "$target_config" | jq -r '.test.vmimage_name // empty')
+            
+            if [ -n "$vmimage_name" ]; then
+                log "  下载测试镜像..."
+                
+                # 创建镜像目录
+                local IMAGE_DIR="/tmp/.axvisor-images"
+                mkdir -p "$IMAGE_DIR"
+                
+                # 安装 ostool（如果尚未安装）
+                if ! command -v ostool &> /dev/null; then
+                    log "  安装 ostool..."
+                    cargo +stable install ostool --version ^0.8
+                fi
+                
+                # 检查并下载镜像
+                IFS=',' read -ra CONFIGS <<< "$vmconfigs"
+                IFS=',' read -ra IMAGES <<< "$vmimage_name"
+                
+                for i in "${!CONFIGS[@]}"; do
+                    img="${IMAGES[$i]}"
+                    img=$(echo "$img" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    config="${CONFIGS[$i]}"
+                    config=$(echo "$config" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    
+                    # 检查镜像是否存在
+                    local img_path="${IMAGE_DIR}/${img}"
+                    if [ -d "$img_path" ]; then
+                        log "  镜像已存在: $img_path"
+                    else
+                        log "  镜像不存在，开始下载: $img"
+                        if [ -f "$test_dir/$config" ]; then
+                            cd "$test_dir"
+                            if cargo xtask image download $img >> "$log_file" 2>&1; then
+                                log_success "  镜像下载成功: $img"
+                            else
+                                log_error "  镜像下载失败: $img"
+                                echo "failed" > "$status_file"
+                                cd "$COMPONENT_DIR"
+                                return 1
+                            fi
+                        else
+                            log_warn "  配置文件不存在: $config"
+                        fi
+                    fi
+                    
+                    if [ -f "$test_dir/$config" ]; then
+                        cd "$test_dir"
+                        
+                        # 获取 image_location
+                        local image_location=$(sed -n 's/^image_location[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$config")
+                        local img_name="qemu-$arch"
+                        
+                        case "$image_location" in
+                        "fs")
+                            log "  文件系统存储模式 - 无需更新配置"
+                            ;;
+                        "memory")
+                            sed -i 's|^kernel_path[[:space:]]*=.*|kernel_path = "'"${IMAGE_DIR}"'/'"$img"'/'"$img_name"'"|' "$config"
+                            log "  内存存储模式 - 已更新 kernel_path"
+                            ;;
+                        *)
+                            log "  未知的 image_location: $image_location"
+                            ;;
+                        esac
+                        
+                        # 检查并处理 rootfs.img
+                        local ROOTFS_IMG_PATH="${IMAGE_DIR}/$img/rootfs.img"
+                        local qemu_config="$test_dir/$(echo "$target_config" | jq -r '.test.qemu_config')"
+                        
+                        if [ -f "${ROOTFS_IMG_PATH}" ]; then
+                            log "  找到 rootfs.img，更新 $qemu_config"
+                            sed -i 's|file=${workspaceFolder}/tmp/rootfs.img|file='"${ROOTFS_IMG_PATH}"'|' "$qemu_config"
+                            log "  Rootfs 配置完成"
+                        else
+                            log "  未找到 rootfs.img，移除 rootfs 设备配置"
+                            sed -i '/-device/,/virtio-blk-device,drive=disk0/d' "$qemu_config"
+                            sed -i '/-drive/,/id=disk0,if=none,format=raw,file=${workspaceFolder}\/tmp\/rootfs.img/d' "$qemu_config"
+                            sed -i 's/root=\/dev\/vda rw //' "$qemu_config"
+                            log "  Rootfs 设备配置已移除"
+                        fi
+                    else
+                        log_warn "  配置文件不存在: $config"
+                    fi
+                done
+                cd "$COMPONENT_DIR"
+            fi
+        fi
+        
+        # 准备测试命令
+        local full_test_cmd=""
+        if [[ "$target_name" == axvisor-* ]]; then
+            # Axvisor QEMU 测试
+            local build_config=$(echo "$target_config" | jq -r '.test.build_config')
+            local qemu_config=$(echo "$target_config" | jq -r '.test.qemu_config')
+            local vmconfigs=$(echo "$target_config" | jq -r '.test.vmconfigs')
+            full_test_cmd="$test_cmd --build-config $build_config --qemu-config $qemu_config --vmconfigs $vmconfigs"
+        elif [[ "$target_name" == starry-* ]]; then
+            # Starry 测试
+            local arch=$(echo "$target_config" | jq -r '.arch')
+            full_test_cmd="ARCH=$arch $test_cmd $arch"
+        fi
+        
+        if [ "$DRY_RUN" == true ]; then
+            echo "[DRY-RUN] cd $test_dir && timeout ${test_timeout}m $full_test_cmd"
+        else
+            cd "$test_dir"
+            export RUST_LOG=debug
+            if timeout "${test_timeout}m" sh -c "$full_test_cmd" >> "$log_file" 2>&1; then
+                log_success "  测试成功: $target_name"
+                echo "passed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 0
+            else
+                local exit_code=$?
+                if [ $exit_code -eq 124 ]; then
+                    log_error "  测试超时: $target_name"
+                else
+                    log_error "  测试失败: $target_name (退出码: $exit_code)"
+                fi
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
+            fi
+        fi
+    else
+        # 没有测试配置，仅构建成功就算通过
+        log_success "  仅构建，无测试: $target_name"
+        echo "passed" > "$status_file"
+        cd "$COMPONENT_DIR"
+        return 0
     fi
 }
 
@@ -380,6 +665,7 @@ run_all_tests() {
     local targets=$(get_test_targets)
     local failed=0
     local passed=0
+    local skipped=0
     local pids=()
     local target_array=()
     
@@ -407,8 +693,12 @@ run_all_tests() {
     else
         # 顺序执行
         for target in "${target_array[@]}"; do
-            if run_test_target "$target"; then
+            run_test_target "$target"
+            local exit_code=$?
+            if [ $exit_code -eq 0 ]; then
                 ((passed++))
+            elif [ $exit_code -eq 2 ]; then
+                ((skipped++))
             else
                 ((failed++))
             fi
@@ -419,9 +709,10 @@ run_all_tests() {
     log "测试结果:"
     echo "  - 通过: $passed"
     echo "  - 失败: $failed"
+    echo "  - 跳过: $skipped"
     
     # 生成报告
-    generate_report "$passed" "$failed"
+    generate_report "$passed" "$failed" "$skipped"
     
     if [ $failed -gt 0 ]; then
         return 1
@@ -433,6 +724,7 @@ run_all_tests() {
 generate_report() {
     local passed=$1
     local failed=$2
+    local skipped=$3
     local report_file="$OUTPUT_DIR/report.md"
     
     cat > "$report_file" << EOF
@@ -448,6 +740,7 @@ generate_report() {
 |------|------|
 | ✅ 通过 | $passed |
 | ❌ 失败 | $failed |
+| ⏭️ 跳过 | $skipped |
 
 ## 详细结果
 
@@ -459,6 +752,8 @@ EOF
             local status=$(cat "$status_file")
             if [ "$status" == "passed" ]; then
                 echo "- $name: ✅ 通过" >> "$report_file"
+            elif [ "$status" == "skipped" ]; then
+                echo "- $name: ⏭️ 跳过 (需要硬件)" >> "$report_file"
             else
                 echo "- $name: ❌ 失败" >> "$report_file"
             fi
@@ -516,6 +811,8 @@ main() {
     echo ""
     if [ $result -eq 0 ]; then
         log_success "所有测试通过!"
+    elif [ $result -eq 2 ]; then
+        log_warn "部分测试被跳过（需要硬件）"
     else
         log_error "部分测试失败"
     fi
