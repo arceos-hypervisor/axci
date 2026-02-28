@@ -380,9 +380,69 @@ setup_output() {
     if [ -z "$OUTPUT_DIR" ]; then
         OUTPUT_DIR="$COMPONENT_DIR/test-results"
     fi
-    
+
     mkdir -p "$OUTPUT_DIR/logs"
     log_debug "输出目录: $OUTPUT_DIR"
+}
+
+# 运行命令并监控输出，检测成功标识符
+run_with_success_detection() {
+    local cmd="$1"
+    local timeout_minutes="$2"
+    local log_file="$3"
+    local success_patterns=()
+
+    # 定义成功标识符模式（支持通配符）
+    success_patterns+=("Welcome to")
+    success_patterns+=("All tests passed!")
+    success_patterns+=("Hello World!")
+    success_patterns+=("root@firefly:~#")
+    success_patterns+=("root@phytium-Ubuntu:~#")
+    success_patterns+=("Set hostname to")
+    success_patterns+=("starry:~#")
+    success_patterns+=("Last login:")
+
+    # 使用 timeout 运行命令，同时监控输出
+    local pid=""
+    local fifo=$(mktemp -u)
+    mkfifo "$fifo"
+
+    # 启动命令并将输出重定向到管道和日志
+    eval "$cmd" < /dev/null > "$fifo" 2>&1 &
+    pid=$!
+
+    # 读取管道并检测成功标识符
+    while IFS= read -r line; do
+        # 输出到日志
+        echo "$line" >> "$log_file"
+
+        # 检测是否匹配任何成功标识符
+        for pattern in "${success_patterns[@]}"; do
+            if [[ "$line" == *"$pattern"* ]]; then
+                log_success "  检测到成功标识符: '$pattern'"
+                rm -f "$fifo"
+                kill $pid 2>/dev/null || true
+                wait $pid 2>/dev/null || true
+                return 0
+            fi
+        done
+    done < "$fifo" &
+
+    # 设置超时
+    timeout "${timeout_minutes}m" tail --pid=$pid -f /dev/null
+    local exit_code=$?
+
+    # 清理
+    rm -f "$fifo"
+
+    if [ $exit_code -eq 124 ]; then
+        return 124
+    elif [ $exit_code -eq 0 ]; then
+        # 检查是否因为检测到成功标识符而提前退出
+        return 0
+    else
+        return $exit_code
+    fi
 }
 
 # 获取要测试的目标
@@ -430,13 +490,40 @@ get_test_targets() {
     echo "${targets[@]}"
 }
 
+# 检查并关闭占用端口5555的程序
+kill_port_5555_processes() {
+    local pids=$(lsof -ti :5555 2>/dev/null)
+    
+    if [ -n "$pids" ]; then
+        log_warn "  检测到端口5555被占用，正在关闭进程..."
+        for pid in $pids; do
+            log_debug "    关闭进程: PID=$pid"
+            kill -9 $pid 2>/dev/null || true
+        done
+        # 等待端口释放
+        sleep 1
+        log_success "  端口5555已释放"
+    else
+        log_debug "  端口5555未被占用"
+    fi
+}
+
 # 运行单个测试目标
 run_test_target() {
     local target_name=$1
+    local current_index=${2:-0}
+    local total_count=${3:-1}
     local log_file="$OUTPUT_DIR/logs/${target_name}_$(date +%Y%m%d_%H%M%S).log"
     local status_file="$OUTPUT_DIR/${target_name}.status"
     
-    log "测试目标: $target_name"
+    if [ $total_count -gt 1 ]; then
+        log "[$current_index/$total_count] 测试目标: $target_name"
+    else
+        log "测试目标: $target_name"
+    fi
+    
+    # 在测试开始前检查并关闭端口5555
+    kill_port_5555_processes
     
     # 获取目标配置
     local target_config=$(echo "$CONFIG" | jq -e ".test_targets[] | select(.name == \"$target_name\")")
@@ -568,16 +655,25 @@ EOF
             
             if timeout "${timeout_min}m" sh -c "$actual_build_cmd" >> "$log_file" 2>&1; then
                 log_success "  构建成功: $target_name"
-                
+
                 # 为 starry 测试准备 rootfs
                 if [[ "$target_name" == starry-* ]]; then
                     log "  准备 rootfs..."
                     local arch=$(echo "$target_config" | jq -r '.arch')
                     # 将 ARCH 作为 make 参数传递，而不是环境变量
-                    if timeout "${timeout_min}m" sh -c "make rootfs ARCH=$arch" >> "$log_file" 2>&1; then
+                    # rootfs 准备使用独立的超时时间（1分钟）
+                    if timeout 1m sh -c "make rootfs ARCH=$arch" >> "$log_file" 2>&1; then
                         log_success "  Rootfs 准备成功"
                     else
-                        log_warn "  Rootfs 准备失败，继续测试（可能影响测试结果）"
+                        local rootfs_exit_code=$?
+                        if [ $rootfs_exit_code -eq 124 ]; then
+                            log_error "  Rootfs 准备超时，请检查网络环境"
+                        else
+                            log_error "  Rootfs 准备失败（退出码: $rootfs_exit_code）: $target_name"
+                        fi
+                        echo "failed" > "$status_file"
+                        cd "$COMPONENT_DIR"
+                        return 1
                     fi
                 fi
             else
@@ -921,18 +1017,23 @@ EOF
         else
             cd "$test_dir"
             export RUST_LOG=debug
-            if $full_test_cmd 2>&1 | tee -a "$log_file"; then
+
+            # 使用成功检测函数运行测试
+            run_with_success_detection "$full_test_cmd" "${test_timeout}" "$log_file"
+            local exit_code=$?
+
+            if [ $exit_code -eq 0 ]; then
                 log_success "  测试成功: $target_name"
                 echo "passed" > "$status_file"
                 cd "$COMPONENT_DIR"
                 return 0
+            elif [ $exit_code -eq 124 ]; then
+                log_error "  测试超时（未检测到成功标识符）: $target_name"
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
             else
-                local exit_code=$?
-                if [ $exit_code -eq 124 ]; then
-                    log_error "  测试超时: $target_name"
-                else
-                    log_error "  测试失败: $target_name (退出码: $exit_code)"
-                fi
+                log_error "  测试失败（退出码: $exit_code）: $target_name"
                 echo "failed" > "$status_file"
                 cd "$COMPONENT_DIR"
                 return 1
@@ -958,14 +1059,21 @@ run_all_tests() {
     
     # 转换为数组
     read -ra target_array <<< "$targets"
-    
+    local total_count=${#target_array[@]}
+
     log "测试目标: ${target_array[*]}"
     echo ""
-    
-    if [ "$PARALLEL" == true ] && [ ${#target_array[@]} -gt 1 ]; then
+
+    local force_sequential=false
+    if [[ "$TEST_TARGET" == "all" ]] || [[ "$TEST_TARGET" == "starry" ]] || [[ "$TEST_TARGET" == "axvisor-board" ]]; then
+        force_sequential=true
+    fi
+
+    if [ "$PARALLEL" == true ] && [ $total_count -gt 1 ] && [ "$force_sequential" == false ]; then
         # 并行执行
-        for target in "${target_array[@]}"; do
-            run_test_target "$target" &
+        for i in "${!target_array[@]}"; do
+            local target="${target_array[$i]}"
+            run_test_target "$target" $((i+1)) $total_count &
             pids+=($!)
         done
         
@@ -979,8 +1087,9 @@ run_all_tests() {
         done
     else
         # 顺序执行
-        for target in "${target_array[@]}"; do
-            run_test_target "$target"
+        for i in "${!target_array[@]}"; do
+            local target="${target_array[$i]}"
+            run_test_target "$target" $((i+1)) $total_count
             local exit_code=$?
             if [ $exit_code -eq 0 ]; then
                 ((passed++))
