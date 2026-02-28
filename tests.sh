@@ -419,7 +419,6 @@ run_with_success_detection() {
         # 检测是否匹配任何成功标识符
         for pattern in "${success_patterns[@]}"; do
             if [[ "$line" == *"$pattern"* ]]; then
-                log_success "  检测到成功标识符: '$pattern'"
                 rm -f "$fifo"
                 kill $pid 2>/dev/null || true
                 wait $pid 2>/dev/null || true
@@ -495,16 +494,12 @@ kill_port_5555_processes() {
     local pids=$(lsof -ti :5555 2>/dev/null)
     
     if [ -n "$pids" ]; then
-        log_warn "  检测到端口5555被占用，正在关闭进程..."
         for pid in $pids; do
             log_debug "    关闭进程: PID=$pid"
             kill -9 $pid 2>/dev/null || true
         done
         # 等待端口释放
         sleep 1
-        log_success "  端口5555已释放"
-    else
-        log_debug "  端口5555未被占用"
     fi
 }
 
@@ -601,7 +596,6 @@ run_test_target() {
             patch_path="$(cd "$resolved_path" && pwd)"
         else
             # 如果相对路径解析失败，直接使用组件目录的绝对路径
-            log "  相对路径 $patch_path 不存在，使用组件目录: $COMPONENT_DIR"
             patch_path="$COMPONENT_DIR"
         fi
     fi
@@ -654,7 +648,6 @@ EOF
             fi
             
             if timeout "${timeout_min}m" sh -c "$actual_build_cmd" >> "$log_file" 2>&1; then
-                log_success "  构建成功: $target_name"
 
                 # 为 starry 测试准备 rootfs
                 if [[ "$target_name" == starry-* ]]; then
@@ -663,7 +656,7 @@ EOF
                     # 将 ARCH 作为 make 参数传递，而不是环境变量
                     # rootfs 准备使用独立的超时时间（1分钟）
                     if timeout 1m sh -c "make rootfs ARCH=$arch" >> "$log_file" 2>&1; then
-                        log_success "  Rootfs 准备成功"
+                        log "  Rootfs 准备完成"
                     else
                         local rootfs_exit_code=$?
                         if [ $rootfs_exit_code -eq 124 ]; then
