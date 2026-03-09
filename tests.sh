@@ -34,6 +34,7 @@ OUTPUT_DIR=""
 USE_GIT=false
 GIT_BRANCH=""
 CLEAN_RESULTS=false
+AUTO_MODE=false
 
 # 帮助信息
 show_help() {
@@ -55,6 +56,7 @@ Hypervisor Test Framework - 本地测试脚本
   --from-git                 从 git 仓库拉取代码 (默认从 crates.io 下载)
   --branch BRANCH            指定 git 分支 (仅与 --from-git 一起使用)
   --clean                    清理测试生成的 test-results 目录
+  --auto                     根据 rust-toolchain.toml 中的 targets 自动选择测试
   -h, --help                 显示此帮助
 
 测试目标:
@@ -81,6 +83,7 @@ Hypervisor Test Framework - 本地测试脚本
 
 示例:
   tests.sh                                    # 在当前目录运行所有测试
+  tests.sh --auto                             # 根据 rust-toolchain.toml 自动选择测试
   tests.sh -t axvisor-qemu                    # 仅运行 axvisor QEMU 测试
   tests.sh -t axvisor-board                   # 仅运行 axvisor Board 测试
   tests.sh -t starry-aarch64                  # 仅运行 starry aarch64 测试
@@ -138,6 +141,10 @@ parse_args() {
                 CLEAN_RESULTS=true
                 shift
                 ;;
+            --auto)
+                AUTO_MODE=true
+                shift
+                ;;
             -h|--help)
                 show_help
                 exit 0
@@ -163,6 +170,67 @@ log_debug() {
 }
 
 error() { log_error "$1"; exit 1; }
+
+# 从 rust-toolchain.toml 中提取 targets 并映射到架构
+detect_targets_from_toolchain() {
+    local toolchain_file="$COMPONENT_DIR/rust-toolchain.toml"
+    local detected_archs=()
+
+    if [ ! -f "$toolchain_file" ]; then
+        log_warn "未找到 rust-toolchain.toml，使用所有架构"
+        echo "all"
+        return
+    fi
+
+    # 提取 targets 数组
+    local targets=$(grep -A 20 '^targets' "$toolchain_file" 2>/dev/null | grep -o '"[^"]*"' | tr -d '"' || true)
+
+    if [ -z "$targets" ]; then
+        log_warn "rust-toolchain.toml 中未找到 targets，使用所有架构"
+        echo "all"
+        return
+    fi
+
+    log_debug "从 rust-toolchain.toml 检测到 targets:"
+
+    # 解析每个 target 并映射到架构
+    while IFS= read -r target; do
+        [ -z "$target" ] && continue
+        log_debug "  - $target"
+
+        case "$target" in
+            *aarch64*)
+                if [[ " ${detected_archs[*]} " != *" aarch64 "* ]]; then
+                    detected_archs+=("aarch64")
+                fi
+                ;;
+            *x86_64*)
+                if [[ " ${detected_archs[*]} " != *" x86_64 "* ]]; then
+                    detected_archs+=("x86_64")
+                fi
+                ;;
+            *riscv64*)
+                if [[ " ${detected_archs[*]} " != *" riscv64 "* ]]; then
+                    detected_archs+=("riscv64")
+                fi
+                ;;
+            *loongarch64*)
+                if [[ " ${detected_archs[*]} " != *" loongarch64 "* ]]; then
+                    detected_archs+=("loongarch64")
+                fi
+                ;;
+        esac
+    done <<< "$targets"
+
+    if [ ${#detected_archs[@]} -eq 0 ]; then
+        log_warn "无法从 targets 识别架构，使用所有架构"
+        echo "all"
+        return
+    fi
+
+    log "检测到的架构: ${detected_archs[*]}"
+    echo "${detected_archs[*]}"
+}
 
 # 检查依赖
 check_dependencies() {
@@ -505,7 +573,41 @@ run_with_success_detection() {
 get_test_targets() {
     local targets=()
 
-    if [ "$TEST_TARGET" == "all" ]; then
+    if [ "$AUTO_MODE" == true ]; then
+        # 自动模式：根据 rust-toolchain.toml 中的 targets 选择测试
+        local archs=$(detect_targets_from_toolchain)
+
+        if [ "$archs" == "all" ]; then
+            # 无法识别架构，运行所有测试
+            local count=$(echo "$CONFIG" | jq '.test_targets | length')
+            for ((i=0; i<count; i++)); do
+                targets+=("$(echo "$CONFIG" | jq -r ".test_targets[$i].name")")
+            done
+        else
+            # 根据检测到的架构选择测试目标
+            local count=$(echo "$CONFIG" | jq '.test_targets | length')
+            for ((i=0; i<count; i++)); do
+                local name=$(echo "$CONFIG" | jq -r ".test_targets[$i].name")
+                local target_arch=$(echo "$CONFIG" | jq -r ".test_targets[$i].arch")
+
+                # 检查目标架构是否在检测到的架构列表中
+                for arch in $archs; do
+                    if [ "$target_arch" == "$arch" ]; then
+                        targets+=("$name")
+                        break
+                    fi
+                done
+            done
+        fi
+
+        if [ ${#targets[@]} -eq 0 ]; then
+            log_warn "未找到匹配的测试目标，运行所有测试"
+            local count=$(echo "$CONFIG" | jq '.test_targets | length')
+            for ((i=0; i<count; i++)); do
+                targets+=("$(echo "$CONFIG" | jq -r ".test_targets[$i].name")")
+            done
+        fi
+    elif [ "$TEST_TARGET" == "all" ]; then
         # 从配置获取所有目标
         local count=$(echo "$CONFIG" | jq '.test_targets | length')
         for ((i=0; i<count; i++)); do
