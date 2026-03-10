@@ -487,7 +487,6 @@ setup_output() {
     fi
 
     sudo mkdir -p "$OUTPUT_DIR/logs"
-    chmod 777 "$OUTPUT_DIR/logs"
     log_debug "输出目录: $OUTPUT_DIR"
 }
 

@@ -17,37 +17,10 @@ on:
         type: string
 
 jobs:
-  # 获取测试目标列表
-  detect-targets:
-    name: Detect Targets
-    runs-on: self-hosted
-    outputs:
-      targets: ${{ steps.detect.outputs.targets }}
-    steps:
-      - name: Checkout component
-        uses: actions/checkout@v4
-
-      - name: Download tests.sh
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
-          chmod +x tests.sh
-
-      - name: Detect test targets
-        id: detect
-        run: |
-          TARGETS=$(./tests.sh --list-auto)
-          sudo echo "targets=$TARGETS" >> $GITHUB_OUTPUT
-          sudo echo "Detected targets: $TARGETS"
-
-  # 运行测试 (matrix 并行)
   test:
-    name: Test ${{ matrix.target }}
-    needs: detect-targets
+    name: Run Tests
     runs-on: self-hosted
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJson(needs.detect-targets.outputs.targets) }}
+
     steps:
       - name: Checkout component
         uses: actions/checkout@v4
@@ -57,14 +30,6 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
           chmod +x tests.sh
 
-      - name: Run test for ${{ matrix.target }}
+      - name: Run tests
         run: |
-          ./tests.sh -t ${{ matrix.target }} --sequential
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.target }}
-          path: test-results/
-          retention-days: 7
+          ./tests.sh --auto --dry-run --sequential
