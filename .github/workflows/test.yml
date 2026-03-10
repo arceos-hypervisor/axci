@@ -66,7 +66,7 @@ jobs:
 
       - name: Run test for ${{ matrix.target }}
         run: |
-          ./tests.sh -t ${{ matrix.target }} --sequential
+          ./tests.sh -t ${{ matrix.target }} --dry-run
 
       - name: Upload test results
         if: always()

@@ -331,7 +331,7 @@ DEFAULT_TARGETS='[
     "type": "qemu",
     "arch": "riscv64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-    "build": {"command": "make build", "timeout_minutes": 30},
+    "build": {"command": "make build", "timeout_minutes": 15},
     "test": {},
     "patch": {"path_template": "../component"}
   },
@@ -340,7 +340,7 @@ DEFAULT_TARGETS='[
     "type": "qemu",
     "arch": "loongarch64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-    "build": {"command": "make build", "timeout_minutes": 30},
+    "build": {"command": "make build", "timeout_minutes": 15},
     "test": {},
     "patch": {"path_template": "../component"}
   },
@@ -349,7 +349,7 @@ DEFAULT_TARGETS='[
     "type": "qemu",
     "arch": "aarch64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-    "build": {"command": "make build", "timeout_minutes": 30},
+    "build": {"command": "make build", "timeout_minutes": 15},
     "test": {},
     "patch": {"path_template": "../component"}
   },
@@ -358,7 +358,7 @@ DEFAULT_TARGETS='[
     "type": "qemu",
     "arch": "x86_64",
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
-    "build": {"command": "make build", "timeout_minutes": 30},
+    "build": {"command": "make build", "timeout_minutes": 15},
     "test": {},
     "patch": {"path_template": "../component"}
   },
@@ -1453,6 +1453,23 @@ main() {
         exit 0
     fi
 
+    # 处理 --list-json: 输出所有测试目标的 JSON 数组 (用于 CI matrix)
+    # 必须在任何日志输出之前处理
+    if [ "$LIST_JSON" == true ]; then
+        load_config >/dev/null 2>&1
+        local targets=$(echo "$CONFIG" | jq -c '[.test_targets[].name]')
+        echo "$targets"
+        exit 0
+    fi
+
+    # 处理 --list-auto: 输出自动检测的测试目标 (用于 CI matrix)
+    if [ "$LIST_AUTO" == true ]; then
+        load_config >/dev/null 2>&1
+        local targets=$(get_test_targets)
+        echo "$targets" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s -c
+        exit 0
+    fi
+
     echo -e "${CYAN}════════════════════════════════════════${NC}"
     echo -e "${CYAN}  Hypervisor Test Framework${NC}"
     echo -e "${CYAN}════════════════════════════════════════${NC}"
@@ -1463,21 +1480,6 @@ main() {
 
     log "配置加载完成"
     log "组件: $COMPONENT_NAME ($COMPONENT_CRATE)"
-
-    # 处理 --list-json: 输出所有测试目标的 JSON 数组 (用于 CI matrix)
-    if [ "$LIST_JSON" == true ]; then
-        local targets=$(echo "$CONFIG" | jq -c '[.test_targets[].name]')
-        echo "$targets"
-        exit 0
-    fi
-
-    # 处理 --list-auto: 输出自动检测的测试目标 (用于 CI matrix)
-    if [ "$LIST_AUTO" == true ]; then
-        local targets=$(get_test_targets)
-        local json_array=$(echo "$targets" | tr ' ' '\n' | jq -R . | jq -s .)
-        echo "$json_array"
-        exit 0
-    fi
 
     # 处理 list 命令
     if [ "$TEST_TARGET" == "list" ]; then
