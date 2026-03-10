@@ -17,10 +17,13 @@ on:
         type: string
 
 jobs:
-  test:
-    name: Run Tests
+  # 检测测试目标列表
+  detect-targets:
+    name: Detect Targets
     runs-on: self-hosted
-
+    outputs:
+      targets: ${{ steps.detect.outputs.targets }}
+      has-targets: ${{ steps.detect.outputs.has-targets }}
     steps:
       - name: Checkout component
         uses: actions/checkout@v4
@@ -30,6 +33,57 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
           chmod +x tests.sh
 
-      - name: Run tests
+      - name: Detect test targets
+        id: detect
         run: |
-          ./tests.sh --auto --dry-run --sequential
+          TARGETS=$(./tests.sh --list-auto)
+          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          if [ "$TARGETS" = "[]" ]; then
+            echo "has-targets=false" >> $GITHUB_OUTPUT
+          else
+            echo "has-targets=true" >> $GITHUB_OUTPUT
+          fi
+          echo "Detected targets: $TARGETS"
+
+  # 运行测试 (matrix 并行)
+  test:
+    name: Test ${{ matrix.target }}
+    needs: detect-targets
+    if: needs.detect-targets.outputs.has-targets == 'true'
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.detect-targets.outputs.targets) }}
+    steps:
+      - name: Checkout component
+        uses: actions/checkout@v4
+
+      - name: Download tests.sh
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
+          chmod +x tests.sh
+
+      - name: Run test for ${{ matrix.target }}
+        run: |
+          ./tests.sh -t ${{ matrix.target }} --sequential
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.target }}
+          path: test-results/
+          retention-days: 7
+
+  # 无测试目标时的提示
+  no-tests:
+    name: No Tests Available
+    needs: detect-targets
+    if: needs.detect-targets.outputs.has-targets == 'false'
+    runs-on: self-hosted
+    steps:
+      - name: No tests to run
+        run: |
+          echo "No test targets detected for this component."
+          echo "Check rust-toolchain.toml or component configuration."
