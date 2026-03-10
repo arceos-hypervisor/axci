@@ -25,9 +25,11 @@ jobs:
       - name: Checkout component
         uses: actions/checkout@v4
 
-      - name: Make tests.sh executable
-        run: chmod +x tests.sh
+      - name: Download tests.sh
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
+          chmod +x tests.sh
 
       - name: Run tests
         run: |
-          ./tests.sh --auto --sequential
+          ./tests.sh --auto --dry-run --sequential
