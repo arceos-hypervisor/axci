@@ -35,6 +35,8 @@ USE_GIT=false
 GIT_BRANCH=""
 CLEAN_RESULTS=false
 AUTO_MODE=false
+LIST_JSON=false
+LIST_AUTO=false
 
 # 帮助信息
 show_help() {
@@ -57,6 +59,8 @@ Hypervisor Test Framework - 本地测试脚本
   --branch BRANCH            指定 git 分支 (仅与 --from-git 一起使用)
   --clean                    清理测试生成的 test-results 目录
   --auto                     根据 rust-toolchain.toml 中的 targets 自动选择测试
+  --list-auto                列出自动检测的测试目标 (JSON 格式)
+  --list-json                列出所有测试目标 (JSON 格式，用于 CI matrix)
   -h, --help                 显示此帮助
 
 测试目标:
@@ -142,6 +146,15 @@ parse_args() {
                 shift
                 ;;
             --auto)
+                AUTO_MODE=true
+                shift
+                ;;
+            --list-json)
+                LIST_JSON=true
+                shift
+                ;;
+            --list-auto)
+                LIST_AUTO=true
                 AUTO_MODE=true
                 shift
                 ;;
@@ -1446,6 +1459,21 @@ main() {
 
     log "配置加载完成"
     log "组件: $COMPONENT_NAME ($COMPONENT_CRATE)"
+
+    # 处理 --list-json: 输出所有测试目标的 JSON 数组 (用于 CI matrix)
+    if [ "$LIST_JSON" == true ]; then
+        local targets=$(echo "$CONFIG" | jq -c '[.test_targets[].name]')
+        echo "$targets"
+        exit 0
+    fi
+
+    # 处理 --list-auto: 输出自动检测的测试目标 (用于 CI matrix)
+    if [ "$LIST_AUTO" == true ]; then
+        local targets=$(get_test_targets)
+        local json_array=$(echo "$targets" | tr ' ' '\n' | jq -R . | jq -s .)
+        echo "$json_array"
+        exit 0
+    fi
 
     # 处理 list 命令
     if [ "$TEST_TARGET" == "list" ]; then
