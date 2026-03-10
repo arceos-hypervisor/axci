@@ -486,7 +486,8 @@ setup_output() {
         OUTPUT_DIR="$COMPONENT_DIR/test-results"
     fi
 
-    mkdir -p "$OUTPUT_DIR/logs"
+    sudo mkdir -p "$OUTPUT_DIR/logs"
+    chmod 777 "$OUTPUT_DIR/logs"
     log_debug "输出目录: $OUTPUT_DIR"
 }
 
@@ -717,12 +718,12 @@ check_component_used() {
 
 # 检查并关闭占用端口5555的程序
 kill_port_5555_processes() {
-    local pids=$(lsof -ti :5555 2>/dev/null)
+    local pids=$(sudo lsof -ti :5555 2>/dev/null)
     
     if [ -n "$pids" ]; then
         for pid in $pids; do
             log_debug "    关闭进程: PID=$pid"
-            kill -9 $pid 2>/dev/null || true
+            sudo kill -9 $pid 2>/dev/null || true
         done
         # 等待端口释放
         sleep 1

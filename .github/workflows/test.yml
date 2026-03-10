@@ -36,8 +36,8 @@ jobs:
         id: detect
         run: |
           TARGETS=$(./tests.sh --list-auto)
-          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
-          echo "Detected targets: $TARGETS"
+          sudo echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          sudo echo "Detected targets: $TARGETS"
 
   # 运行测试 (matrix 并行)
   test:
