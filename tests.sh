@@ -487,6 +487,7 @@ setup_output() {
     fi
 
     sudo mkdir -p "$OUTPUT_DIR/logs"
+    sudo chmod -R 777 "$OUTPUT_DIR"
     log_debug "输出目录: $OUTPUT_DIR"
 }
 
@@ -961,7 +962,8 @@ EOF
             
             # 创建 TFTP 目录
             local bin_dir=$(echo "$target_config" | jq -r '.test.bin_dir // "/tmp/tftp"')
-            mkdir -p "$bin_dir"
+            sudo mkdir -p "$bin_dir"
+            sudo chmod 777 "$bin_dir"
             log "  TFTP 目录已准备: $bin_dir"
             
             # 下载镜像和配置（类似 QEMU 测试）
@@ -973,7 +975,8 @@ EOF
                 
                 # 创建镜像目录
                 local IMAGE_DIR="/tmp/.axvisor-images"
-                mkdir -p "$IMAGE_DIR"
+                sudo mkdir -p "$IMAGE_DIR"
+                sudo chmod 777 "$IMAGE_DIR"
                 
                 # 检查并下载镜像
                 IFS=',' read -ra CONFIGS <<< "$vmconfigs"
@@ -1057,7 +1060,8 @@ EOF
                 
                 # 创建镜像目录
                 local IMAGE_DIR="/tmp/.axvisor-images"
-                mkdir -p "$IMAGE_DIR"
+                sudo mkdir -p "$IMAGE_DIR"
+                sudo chmod 777 "$IMAGE_DIR"
                 
                 # 安装 ostool（如果尚未安装）
                 if ! command -v ostool &> /dev/null; then
@@ -1441,7 +1445,7 @@ main() {
         fi
         if [ -d "$OUTPUT_DIR" ]; then
             log "清理测试目录: $OUTPUT_DIR"
-            rm -rf "$OUTPUT_DIR"
+            sudo rm -rf "$OUTPUT_DIR"
             log_success "清理完成"
         else
             log "测试目录不存在: $OUTPUT_DIR"
