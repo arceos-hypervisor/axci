@@ -491,11 +491,93 @@ setup_output() {
     log_debug "输出目录: $OUTPUT_DIR"
 }
 
+# 控制开发板电源（通过 mbpoll）
+control_board_power() {
+    local board_name=$1
+    local action=$2  # "on" 或 "off"
+    local power_serial=""
+    
+    # 根据开发板类型确定电源控制串口
+    case "$board_name" in
+        phytiumpi)
+            power_serial="/dev/ttyUSB1"
+            ;;
+        roc-rk3568-pc)
+            power_serial="/dev/ttyUSB2"
+            ;;
+        *)
+            log_debug "  未知开发板类型: $board_name，跳过电源控制"
+            return 0
+            ;;
+    esac
+    
+    # 检查 mbpoll 是否安装
+    if ! command -v mbpoll &> /dev/null; then
+        return 0
+    fi
+    
+    # 检查串口是否存在
+    if [ ! -e "$power_serial" ]; then
+        log_warn "  电源控制串口不存在: $power_serial"
+        return 0
+    fi
+    
+    # 执行电源控制
+    if [ "$action" == "on" ]; then
+        log "  给开发板上电... ($power_serial)"
+        mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 1 &>/dev/null || true
+    elif [ "$action" == "off" ]; then
+        log "  给开发板下电... ($power_serial)"
+        mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 0 &>/dev/null || true
+    fi
+}
+
+# 清理开发板测试资源
+cleanup_board_resources() {
+    local board_name=$1
+    local test_dir=$2
+    
+    log "  清理测试资源..."
+    
+    # 1. 关闭开发板电源
+    control_board_power "$board_name" "off"
+    
+    # 2. 杀掉可能残留的 cargo-osrun 进程
+    local pids=$(ps aux | grep "cargo-osrun.*$test_dir" | grep -v grep | awk '{print $2}')
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            log_debug "    关闭残留进程: PID=$pid"
+            kill -9 $pid 2>/dev/null || true
+        done
+    fi
+    
+    # 3. 释放串口（从 .uboot.json 读取）
+    local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+    if [ -f "$uboot_json_file" ]; then
+        local serial_port=$(jq -r ".boards[\"$board_name\"].serial // empty" "$uboot_json_file" 2>/dev/null)
+        if [ -n "$serial_port" ] && [ -e "$serial_port" ]; then
+            local serial_pids=$(sudo lsof -ti "$serial_port" 2>/dev/null || true)
+            if [ -n "$serial_pids" ]; then
+                for pid in $serial_pids; do
+                    log_debug "    释放串口 $serial_port: PID=$pid"
+                    sudo kill -9 $pid 2>/dev/null || true
+                done
+            fi
+        fi
+    fi
+    
+    # 等待资源释放
+    sleep 2
+    log "  资源清理完成"
+}
+
 # 运行命令并监控输出，检测成功/失败标识符
 run_with_success_detection() {
     local cmd="$1"
     local timeout_minutes="$2"
     local log_file="$3"
+    local board_name="${4:-}"
+    local test_dir="${5:-}"
     local success_patterns=()
     local error_patterns=()
 
@@ -517,6 +599,9 @@ run_with_success_detection() {
     error_patterns+=("panicked")
     error_patterns+=("segmentation fault")
     error_patterns+=("core dumped")
+    
+    # 特殊模式：等待开发板上电
+    local waiting_for_power=false
 
     # 创建临时文件来存储状态
     local status_file=$(mktemp)
@@ -536,6 +621,18 @@ run_with_success_detection() {
         while IFS= read -r line; do
             # 输出到日志
             echo "$line" >> "$log_file"
+            
+            # 检测是否等待开发板上电
+            if [[ "$line" == *"Waiting for board on power or reset"* ]]; then
+                if [ "$waiting_for_power" == false ] && [ -n "$board_name" ]; then
+                    echo "waiting_power" > "$status_file"
+                    waiting_for_power=true
+                    # 执行上电命令
+                    control_board_power "$board_name" "on"
+                    # 提示用户上电
+                    log "  准备就绪，请给开发板上电…"
+                fi
+            fi
 
             # 检测是否匹配任何错误标识符（优先检测错误）
             for pattern in "${error_patterns[@]}"; do
@@ -570,6 +667,11 @@ run_with_success_detection() {
 
     # 清理
     rm -f "$fifo" "$status_file"
+    
+    # 如果是开发板测试，清理资源（关闭电源、释放串口等）
+    if [ -n "$board_name" ] && [ -n "$test_dir" ]; then
+        cleanup_board_resources "$board_name" "$test_dir"
+    fi
 
     # 根据状态返回结果
     if [[ "$status" == error:* ]]; then
@@ -577,6 +679,9 @@ run_with_success_detection() {
         return 1
     elif [ "$status" = "success" ]; then
         return 0
+    elif [ "$status" = "waiting_power" ]; then
+        # 如果仍在等待上电，也算失败
+        return 1
     elif [ $exit_code -eq 124 ]; then
         return 124
     else
@@ -1191,7 +1296,7 @@ EOF
             fi
 
             # 步骤 2: 修改 .build.toml 文件
-            log "  步骤 2: 更新 .build.toml 配置..."
+            log "  更新 .build.toml 配置..."
             local build_toml=".build.toml"
 
             if [ -f "$build_toml" ]; then
@@ -1216,7 +1321,7 @@ EOF
             fi
 
             # 步骤 3: 检查 .uboot.toml 是否存在，不存在则从配置文件读取或提示用户输入
-            log "  步骤 3: 检查 U-Boot 配置..."
+            log "  检查 U-Boot 配置..."
             local uboot_config_file=".uboot.toml"
             local uboot_json_file="$COMPONENT_DIR/.uboot.json"
 
@@ -1311,7 +1416,13 @@ EOF
             export RUST_LOG=debug
 
             # 使用成功检测函数运行测试
-            run_with_success_detection "$full_test_cmd" "${test_timeout}" "$log_file"
+            # 对于 board 测试，传入 board_name 和 test_dir 用于电源控制和资源清理
+            if [ "$test_type" == "board" ]; then
+                local board_name=$(echo "$target_config" | jq -r '.board // empty')
+                run_with_success_detection "$full_test_cmd" "${test_timeout}" "$log_file" "$board_name" "$test_dir"
+            else
+                run_with_success_detection "$full_test_cmd" "${test_timeout}" "$log_file"
+            fi
             local exit_code=$?
 
             if [ $exit_code -eq 0 ]; then
