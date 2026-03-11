@@ -29,7 +29,7 @@ TEST_TARGET="all"
 VERBOSE=false
 CLEANUP=true
 DRY_RUN=false
-PARALLEL=true
+PARALLEL=false
 OUTPUT_DIR=""
 USE_GIT=false
 GIT_BRANCH=""
@@ -55,7 +55,7 @@ Hypervisor Test Framework - 本地测试脚本
   -v, --verbose              详细输出
   --no-cleanup               不清理临时文件
   --dry-run                  仅显示将要执行的命令
-  --sequential               顺序执行测试 (不并行)
+  --parallel                 并行执行测试 (默认顺序执行)
   --from-git                 从 git 仓库拉取代码 (默认从 crates.io 下载)
   --branch BRANCH            指定 git 分支 (仅与 --from-git 一起使用)
   --clean                    清理测试生成的 test-results 目录
@@ -131,8 +131,8 @@ parse_args() {
                 DRY_RUN=true
                 shift
                 ;;
-            --sequential)
-                PARALLEL=false
+            --parallel)
+                PARALLEL=true
                 shift
                 ;;
             --from-git)
