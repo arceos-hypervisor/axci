@@ -524,8 +524,10 @@ control_board_power() {
     
     # 执行电源控制
     if [ "$action" == "on" ]; then
+        mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 0
+        sleep 2
         log "  给开发板上电... ($power_serial)"
-        mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 1 &>/dev/null || true
+        mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 1
     elif [ "$action" == "off" ]; then
         log "  给开发板下电... ($power_serial)"
         mbpoll -m rtu -a 1 -r 1 -t 0 -b 38400 -P none -v "$power_serial" 0 &>/dev/null || true

@@ -53,17 +53,20 @@ jobs:
               MATRIX+=","
             fi
             
-            # 根据目标类型确定 runner
+          # 根据目标类型确定 runner (self-hosted runner 需要数组格式)
             if [[ "$target" == *"board-phytiumpi"* ]]; then
-              runner="phytiumpi"
+              runner='["self-hosted", "phytiumpi"]'
+              board='"phytiumpi"'
             elif [[ "$target" == *"board-roc-rk3568-pc"* ]]; then
-              runner="rk3568"
+              runner='["self-hosted", "rk3568"]'
+              board='"rk3568"'
             else
               # QEMU 测试和其他测试使用 self-hosted
-              runner="self-hosted"
+              runner='"self-hosted"'
+              board='null'
             fi
             
-            MATRIX+="{\"target\":\"$target\",\"runner\":\"$runner\"}"
+            MATRIX+="{\"target\":\"$target\",\"runner\":$runner,\"board\":$board}"
           done
           MATRIX+="]"
           
@@ -83,6 +86,9 @@ jobs:
     needs: detect-targets
     if: needs.detect-targets.outputs.has-targets == 'true'
     runs-on: ${{ matrix.runner }}
+    concurrency:
+      group: ${{ matrix.board || github.run_id }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
