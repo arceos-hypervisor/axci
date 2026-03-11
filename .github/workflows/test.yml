@@ -61,12 +61,12 @@ jobs:
 
       - name: Download tests.sh
         run: |
-          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
+          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/main/tests.sh -o tests.sh
           chmod +x tests.sh
 
       - name: Run test for ${{ matrix.target }}
         run: |
-          ./tests.sh -t ${{ matrix.target }} --dry-run
+          ./tests.sh -t ${{ matrix.target }}
 
       - name: Upload test results
         if: always()
