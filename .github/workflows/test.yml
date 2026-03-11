@@ -58,8 +58,8 @@ jobs:
               runner='["self-hosted", "phytiumpi"]'
               board='"phytiumpi"'
             elif [[ "$target" == *"board-roc-rk3568-pc"* ]]; then
-              runner='["self-hosted", "rk3568"]'
-              board='"rk3568"'
+              runner='["self-hosted", "roc-rk3568-pc"]'
+              board='"roc-rk3568-pc"'
             else
               # QEMU 测试和其他测试使用 self-hosted
               runner='"self-hosted"'
