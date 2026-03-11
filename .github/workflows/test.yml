@@ -102,7 +102,7 @@ jobs:
 
       - name: Run test for ${{ matrix.target }}
         run: |
-          ./tests.sh -t ${{ matrix.target }}
+          ./tests.sh -t ${{ matrix.target }} --fs
 
   # 无测试目标时的提示
   no-tests:
