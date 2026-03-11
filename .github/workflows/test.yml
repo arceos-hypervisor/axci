@@ -61,20 +61,13 @@ jobs:
 
       - name: Download tests.sh
         run: |
-          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/main/tests.sh -o tests.sh
+          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/tests.sh -o tests.sh
+          curl -fsSL https://raw.githubusercontent.com/arceos-hypervisor/axci/dev/.uboot.json -o .uboot.json
           chmod +x tests.sh
 
       - name: Run test for ${{ matrix.target }}
         run: |
           ./tests.sh -t ${{ matrix.target }}
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.target }}
-          path: test-results/
-          retention-days: 7
 
   # 无测试目标时的提示
   no-tests:

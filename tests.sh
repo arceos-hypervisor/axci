@@ -959,7 +959,7 @@ EOF
                 log "  安装 ostool..."
                 cargo +stable install ostool --version ^0.8
             fi
-            
+
             # 创建 TFTP 目录
             local bin_dir=$(echo "$target_config" | jq -r '.test.bin_dir // "/tmp/tftp"')
             sudo mkdir -p "$bin_dir"
@@ -1215,32 +1215,71 @@ EOF
                 return 1
             fi
 
-            # 步骤 3: 检查 .uboot.toml 是否存在，不存在则提示用户输入
+            # 步骤 3: 检查 .uboot.toml 是否存在，不存在则从配置文件读取或提示用户输入
             log "  步骤 3: 检查 U-Boot 配置..."
             local uboot_config_file=".uboot.toml"
+            local uboot_json_file="$COMPONENT_DIR/.uboot.json"
 
             if [ ! -f "$uboot_config_file" ]; then
-                # 生成交互式配置文件
-                log ""
-                log "  ======== 配置 U-Boot 参数 ======== "
-                log ""
+                local serial_input=""
+                local baud_rate_input=""
+                local dtb_file_input=""
+                local board_name=$(echo "$target_config" | jq -r '.board')
 
-                # 提示用户输入 serial
-                echo -e "${CYAN}请输入串口设备路径 (例如: /dev/ttyUSB0):${NC}"
-                read -p "> " serial_input
-                serial_input="${serial_input:-/dev/ttyUSB0}"
+                # 尝试从 .uboot.json 读取配置
+                if [ -f "$uboot_json_file" ]; then
+                    log "  从 .uboot.json 读取 $board_name 的配置..."
+                    
+                    # 检查配置文件中是否有该 board 的配置
+                    local board_config=$(jq -e ".boards[\"$board_name\"]" "$uboot_json_file" 2>/dev/null)
+                    if [ $? -eq 0 ] && [ -n "$board_config" ]; then
+                        serial_input=$(echo "$board_config" | jq -r '.serial // empty')
+                        baud_rate_input=$(echo "$board_config" | jq -r '.baud_rate // empty')
+                        dtb_file_input=$(echo "$board_config" | jq -r '.dtb_file // empty')
+                        
+                        if [ -n "$serial_input" ] && [ -n "$baud_rate_input" ] && [ -n "$dtb_file_input" ]; then
+                            log "  从配置文件读取到:"
+                            log "  - 串口: $serial_input"
+                            log "  - 波特率: $baud_rate_input"
+                            log "  - DTB文件: $dtb_file_input"
+                        else
+                            log_warn "  .uboot.json 中 $board_name 的配置不完整，将使用交互式输入"
+                            serial_input=""
+                            baud_rate_input=""
+                            dtb_file_input=""
+                        fi
+                    else
+                        log_warn "  .uboot.json 中未找到 $board_name 的配置，将使用交互式输入"
+                    fi
+                else
+                    log "  未找到 .uboot.json 配置文件 ($uboot_json_file)"
+                fi
 
-                # 提示用户输入 baud_rate
-                echo ""
-                echo -e "${CYAN}请输入波特率 (例如: 115200):${NC}"
-                read -p "> " baud_rate_input
-                baud_rate_input="${baud_rate_input:-115200}"
+                # 如果从配置文件读取失败，则使用交互式输入
+                if [ -z "$serial_input" ] || [ -z "$baud_rate_input" ] || [ -z "$dtb_file_input" ]; then
+                    log ""
+                    log "  ======== 配置 U-Boot 参数 ======== "
+                    log ""
 
-                # 提示用户输入 dtb_file
-                echo ""
-                echo -e "${CYAN}请输入 DTB 文件路径 (例如: board/orangepi-5-plus.dtb):${NC}"
-                read -p "> " dtb_file_input
-                dtb_file_input="${dtb_file_input:-board/orangepi-5-plus.dtb}"
+                    # 提示用户输入 serial
+                    echo -e "${CYAN}请输入串口设备路径 (例如: /dev/ttyUSB0):${NC}"
+                    read -p "> " serial_input
+                    serial_input="${serial_input:-/dev/ttyUSB0}"
+
+                    # 提示用户输入 baud_rate
+                    echo ""
+                    echo -e "${CYAN}请输入波特率 (例如: 115200):${NC}"
+                    read -p "> " baud_rate_input
+                    baud_rate_input="${baud_rate_input:-115200}"
+
+                    # 提示用户输入 dtb_file
+                    echo ""
+                    echo -e "${CYAN}请输入 DTB 文件路径 (例如: board/orangepi-5-plus.dtb):${NC}"
+                    read -p "> " dtb_file_input
+                    dtb_file_input="${dtb_file_input:-board/orangepi-5-plus.dtb}"
+                    
+                    log ""
+                fi
 
                 # 生成 .uboot.toml 文件
                 cat > "$uboot_config_file" << EOF
@@ -1251,11 +1290,7 @@ fail_regex = []
 dtb_file = "$dtb_file_input"
 EOF
 
-                log ""
                 log "  U-Boot 配置已保存到: $uboot_config_file"
-                log "  - 串口: $serial_input"
-                log "  - 波特率: $baud_rate_input"
-                log "  - DTB文件: $dtb_file_input"
                 log ""
             else
                 log "  使用已存在的配置文件: $uboot_config_file"
