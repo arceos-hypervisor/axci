@@ -1,12 +1,12 @@
 {
   "boards": {
     "phytiumpi": {
-      "serial": "/dev/ttyUSB1",
+      "serial": "/dev/ttyUSB0",
       "baud_rate": "115200",
-      "dtb_file": "/tmp/.axvisor-images/phytiumpi_arceos/phytiumpi.dtb"
+      "dtb_file": "/tmp/.axvisor-images/phytiumpi_linux/phytiumpi.dtb"
     },
     "roc-rk3568-pc": {
-      "serial": "/dev/ttyUSB2",
+      "serial": "/dev/ttyUSB3",
       "baud_rate": "1500000",
       "dtb_file": "/tmp/.axvisor-images/roc-rk3568-pc_linux/roc-rk3568-pc.dtb"
     }

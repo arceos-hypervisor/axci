@@ -86,9 +86,6 @@ jobs:
     needs: detect-targets
     if: needs.detect-targets.outputs.has-targets == 'true'
     runs-on: ${{ matrix.runner }}
-    concurrency:
-      group: ${{ matrix.board || github.run_id }}
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
