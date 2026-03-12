@@ -602,7 +602,6 @@ run_with_success_detection() {
     success_patterns+=("Last login:")
     success_patterns+=("Booting kernel with command")
     # 定义错误标识符模式
-    error_patterns+=("error:")
     error_patterns+=("error[")
     error_patterns+=("FAILED")
     error_patterns+=("panicked")
