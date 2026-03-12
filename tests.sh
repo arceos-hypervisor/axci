@@ -744,7 +744,9 @@ run_with_success_detection() {
                 
                 # 终止串口读取进程
                 kill $serial_pid 2>/dev/null || true
-                wait $serial_pid 2>/dev/null || true
+                sleep 0.5
+                pkill -9 -P $serial_pid 2>/dev/null || true
+                kill -9 $serial_pid 2>/dev/null || true
                 
                 # 恢复终端设置
                 if [ -n "$saved_stty" ]; then
