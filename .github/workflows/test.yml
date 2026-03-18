@@ -82,9 +82,28 @@ jobs:
           fi
           echo "Detected targets: $TARGETS"
 
-  # 运行测试 (matrix 并行)
-  test:
-    name: Test ${{ matrix.target }}
+  # 单元测试
+  unit-test:
+    name: Unit Test
+    runs-on: self-hosted
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout component
+        uses: actions/checkout@v4
+
+      - name: Clone test framework
+        run: |
+          git clone --depth 1 -b ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
+
+      - name: Run unit tests
+        run: |
+          ./axci/tests.sh unit
+
+  # 集成测试 (matrix 并行)
+  integration-test:
+    name: Integration Test ${{ matrix.target }}
     needs: detect-targets
     if: needs.detect-targets.outputs.has-targets == 'true'
     runs-on: ${{ matrix.runner }}
@@ -105,7 +124,7 @@ jobs:
 
       - name: Run test for ${{ matrix.target }}
         run: |
-          ./axci/tests.sh -s ${{ matrix.target }} --fs --print
+          ./axci/tests.sh integration -s ${{ matrix.target }} --fs --print 
 
   # 无测试目标时的提示
   no-tests:
