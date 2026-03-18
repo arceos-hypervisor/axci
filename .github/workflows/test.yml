@@ -105,7 +105,7 @@ jobs:
 
       - name: Run test for ${{ matrix.target }}
         run: |
-          ./axci/tests.sh -t ${{ matrix.target }} --fs --print
+          ./axci/tests.sh -s ${{ matrix.target }} --fs --print
 
   # 无测试目标时的提示
   no-tests:
