@@ -64,8 +64,8 @@ run_with_success_detection() {
     local fifo=$(mktemp -u)
     mkfifo "$fifo"
 
-    # 启动命令并将输出重定向到管道
-    eval "$cmd" < /dev/null > "$fifo" 2>&1 &
+    # 启动命令并将输出重定向到管道（添加全局超时）
+    timeout "${timeout_minutes}m" sh -c "$cmd" < /dev/null > "$fifo" 2>&1 &
     pid=$!
 
     # 在后台读取管道并检测成功/错误标识符
@@ -129,6 +129,10 @@ run_with_success_detection() {
 
             # 从 .uboot.json 获取串口设备
             local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+            # 回退: 框架自带的 uboot.json
+            if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_RUNNER/json/uboot.json" ]; then
+                uboot_json_file="$SCRIPT_DIR_RUNNER/json/uboot.json"
+            fi
             local serial_port=""
             if [ -f "$uboot_json_file" ]; then
                 serial_port=$(jq -r ".boards[\"$board_name\"].serial // empty" "$uboot_json_file" 2>/dev/null)
