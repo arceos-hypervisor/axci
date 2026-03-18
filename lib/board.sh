@@ -280,6 +280,11 @@ setup_uboot_config() {
     local uboot_config_file=".uboot.toml"
     local uboot_json_file="$COMPONENT_DIR/.uboot.json"
 
+    # 回退: 框架自带的 uboot.json
+    if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
+        uboot_json_file="$SCRIPT_DIR_BOARD/json/uboot.json"
+    fi
+
     if [ ! -f "$uboot_config_file" ]; then
         local serial_input=""
         local baud_rate_input=""
