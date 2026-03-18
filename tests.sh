@@ -740,9 +740,13 @@ main() {
 
     # 处理 --list-auto: 输出根据 targets x suite 过滤后的测试目标 (用于 CI matrix)
     if [ "$LIST_AUTO" == true ]; then
-        load_config >/dev/null 2>&1
-        resolve_targets 2>/dev/null
-        local targets=$(get_test_targets 2>/dev/null)
+        # 保存原始 stderr，重定向到 /dev/null 以抑制所有日志输出
+        exec 3>&2 2>/dev/null
+        load_config
+        resolve_targets
+        local targets=$(get_test_targets)
+        # 恢复 stderr 并输出 JSON
+        exec 2>&3 3>&-
         echo "$targets" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s -c
         exit 0
     fi
