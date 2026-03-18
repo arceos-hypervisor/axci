@@ -434,14 +434,18 @@ run_test_target() {
     # 2. 检查当前组件是否被目标项目使用
     if [[ "$target_name" == axvisor-* ]] || [[ "$target_name" == starry-* ]]; then
         if ! check_component_used "$target_name" "$test_dir"; then
-            log_warn "  跳过测试: 当前组件 '$COMPONENT_CRATE' 未在 $target_name 的依赖中使用"
+            log_warn "  跳过测试: 当前组件 '$COMPONENT_CRATE' 未在 $target_name 的依赖中使用 (搜索目录: $test_dir)"
             echo "skipped" > "$status_file"
             return 2
         fi
     fi
 
     # 3. 应用 patch
-    apply_component_patch "$target_config" "$test_dir"
+    if ! apply_component_patch "$target_config" "$test_dir"; then
+        log_error "  Patch 应用失败: $target_name"
+        echo "failed" > "$status_file"
+        return 1
+    fi
 
     # 4. 执行构建
     if [ -n "$build_cmd" ]; then
@@ -689,6 +693,9 @@ run_all_tests() {
     if [ $failed -gt 0 ]; then
         return 1
     fi
+    if [ $passed -eq 0 ] && [ $skipped -gt 0 ]; then
+        return 2
+    fi
     return 0
 }
 
@@ -835,9 +842,7 @@ main() {
         set -e
     fi
 
-    cleanup
-
-    # 生成最终报告
+    # 生成最终报告 (cleanup 由 EXIT trap 处理，无需显式调用)
     echo ""
     echo -e "${CYAN}════════════════════════════════════════${NC}"
     echo -e "${CYAN}  测试结果汇总${NC}"
