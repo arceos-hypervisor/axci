@@ -31,11 +31,10 @@ jobs:
       - name: Checkout component
         uses: actions/checkout@v5
 
-      - name: Checkout axci
-        uses: actions/checkout@v5
-        with:
-          repository: arceos-hypervisor/axci
-          path: axci
+      - name: Clone test framework
+        run: |
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
       - name: Detect test targets
         id: detect
@@ -93,12 +92,10 @@ jobs:
       - name: Checkout component
         uses: actions/checkout@v5
 
-      - name: Checkout axci
-        uses: actions/checkout@v5
-        with:
-          repository: arceos-hypervisor/axci
-          ref: ndev
-          path: axci
+      - name: Clone test framework
+        run: |
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
       - name: Run unit tests
         run: |
@@ -120,12 +117,10 @@ jobs:
       - name: Checkout component
         uses: actions/checkout@v5
 
-      - name: Checkout axci
-        uses: actions/checkout@v5
-        with:
-          repository: arceos-hypervisor/axci
-          ref: ndev
-          path: axci
+      - name: Clone test framework
+        run: |
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
       - name: Run test for ${{ matrix.target }}
         run: |

@@ -45,18 +45,10 @@ jobs:
       - name: Checkout caller repo
         uses: actions/checkout@v5
 
-      - name: Checkout axci
-        uses: actions/checkout@v5
-        with:
-          repository: arceos-hypervisor/axci
-          path: axci
-
-      - name: Debug axci checkout
+      - name: Clone test framework
         run: |
-          git -C axci branch --show-current || true
-          git -C axci rev-parse HEAD
-          sed -n '1,160p' axci/check.sh
-          bash axci/check.sh --help
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/check.sh
 
       - name: Resolve targets
         id: resolve
@@ -84,12 +76,10 @@ jobs:
       - name: Checkout caller repo
         uses: actions/checkout@v5
 
-      - name: Checkout axci
-        uses: actions/checkout@v5
-        with:
-          repository: arceos-hypervisor/axci
-          ref: ndev
-          path: axci
+      - name: Clone test framework
+        run: |
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/check.sh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
