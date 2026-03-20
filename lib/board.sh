@@ -414,8 +414,10 @@ run_board_power_cycle_only_test() {
     local success_detected=false
     local remaining_time=$wait_seconds
 
-    log "  执行仅上电等待测试: $target_name"
-    log "  开发板上电后等待 ${wait_seconds}s，然后下电"
+    cd /home/runner/tftp/
+    sudo wget https://github.com/user-attachments/files/26134564/kernel.tar.gz -O kernel.tar.gz
+    sudo tar -xzf kernel.tar.gz
+    log "  上电等待测试: $target_name"
     echo "[power-cycle-only] board=$board_name wait_seconds=$wait_seconds" >> "$log_file"
 
     if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
