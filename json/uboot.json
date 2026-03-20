@@ -9,6 +9,11 @@
       "serial": "/dev/ttyUSB3",
       "baud_rate": "1500000",
       "dtb_file": "/tmp/.axvisor-images/roc-rk3568-pc_linux/roc-rk3568-pc.dtb"
+    },
+    "x86_64-pc": {
+      "serial": "/dev/ttyUSB5",
+      "baud_rate": "115200",
+      "dtb_file": ""
     }
   }
 }

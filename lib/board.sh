@@ -6,25 +6,49 @@
 SCRIPT_DIR_BOARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_BOARD/lib/common.sh"
 
+get_board_power_serial() {
+    local board_name=$1
+    local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+
+    if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
+        uboot_json_file="$SCRIPT_DIR_BOARD/json/uboot.json"
+    fi
+
+    if [ -f "$uboot_json_file" ]; then
+        local config_serial=$(jq -r ".boards[\"$board_name\"].power_serial // empty" "$uboot_json_file" 2>/dev/null)
+        if [ -n "$config_serial" ]; then
+            echo "$config_serial"
+            return 0
+        fi
+    fi
+
+    case "$board_name" in
+        phytiumpi)
+            echo "/dev/ttyUSB1"
+            ;;
+        x86_64-pc)
+            echo "/dev/ttyUSB4"
+            ;;
+        roc-rk3568-pc)
+            echo "/dev/ttyUSB2"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 # 控制开发板电源（通过 mbpoll）
 control_board_power() {
     local board_name=$1
     local action=$2  # "on" 或 "off"
-    local power_serial=""
+    local power_serial
+    power_serial=$(get_board_power_serial "$board_name")
 
-    # 根据开发板类型确定电源控制串口
-    case "$board_name" in
-        phytiumpi)
-            power_serial="/dev/ttyUSB1"
-            ;;
-        roc-rk3568-pc)
-            power_serial="/dev/ttyUSB2"
-            ;;
-        *)
-            log_debug "  未知开发板类型: $board_name，跳过电源控制"
-            return 0
-            ;;
-    esac
+    if [ -z "$power_serial" ]; then
+        log_debug "  未知开发板类型: $board_name，跳过电源控制"
+        return 0
+    fi
 
     # 检查 mbpoll 是否安装
     if ! command -v mbpoll &> /dev/null; then
@@ -372,4 +396,77 @@ prepare_board_command() {
     local target_config=$1
     local test_cmd=$(echo "$target_config" | jq -r '.test.command')
     echo "$test_cmd"
+}
+
+# 执行仅上电等待的 Board 测试
+# 参数: target_config, target_name, log_file, status_file, test_dir
+run_board_power_cycle_only_test() {
+    local target_config=$1
+    local target_name=$2
+    local log_file=$3
+    local status_file=$4
+    local test_dir=$5
+    local board_name=$(echo "$target_config" | jq -r '.board')
+    local wait_seconds=$(echo "$target_config" | jq -r '.test.wait_seconds // 120')
+    local serial_pid=""
+    local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+    local serial_port=""
+    local success_detected=false
+    local remaining_time=$wait_seconds
+
+    log "  执行仅上电等待测试: $target_name"
+    log "  开发板上电后等待 ${wait_seconds}s，然后下电"
+    echo "[power-cycle-only] board=$board_name wait_seconds=$wait_seconds" >> "$log_file"
+
+    if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
+        uboot_json_file="$SCRIPT_DIR_BOARD/json/uboot.json"
+    fi
+    if [ -f "$uboot_json_file" ]; then
+        serial_port=$(jq -r ".boards[\"$board_name\"].serial // empty" "$uboot_json_file" 2>/dev/null)
+    fi
+
+    if [ -n "$serial_port" ] && [ -e "$serial_port" ]; then
+        log "  开始监听开发板串口: $serial_port"
+        if [[ "$PRINT_OUTPUT" == true ]]; then
+            timeout "$wait_seconds" cat "$serial_port" 2>/dev/null | tee -a "$log_file" &
+        else
+            timeout "$wait_seconds" cat "$serial_port" 2>/dev/null >> "$log_file" &
+        fi
+        serial_pid=$!
+    elif [ -n "$serial_port" ]; then
+        log_warn "  开发板串口不存在: $serial_port"
+    else
+        log_warn "  未配置开发板串口输出: $board_name"
+    fi
+
+    control_board_power "$board_name" "on"
+
+    while [ $remaining_time -gt 0 ]; do
+        if grep -qE "Welcome to|test pass!|All tests passed!|simple_sleep passed!|Hello, world!|root@firefly:~#|root@phytium-Ubuntu:~#|Set hostname to|starry:~#|Last login:|Booting kernel with command" "$log_file" 2>/dev/null; then
+            log "  检测到成功标识符!"
+            success_detected=true
+            break
+        fi
+        sleep 1
+        ((remaining_time--))
+    done
+
+    if [ -n "$serial_pid" ]; then
+        kill "$serial_pid" 2>/dev/null || true
+        sleep 0.5
+        pkill -9 -P "$serial_pid" 2>/dev/null || true
+        kill -9 "$serial_pid" 2>/dev/null || true
+    fi
+
+    cleanup_board_resources "$board_name" "$test_dir"
+
+    if [ "$success_detected" == true ]; then
+        log_success "  检测到成功标识符，测试通过: $target_name"
+        echo "passed" > "$status_file"
+        return 0
+    fi
+
+    log_success "  仅上电等待测试完成: $target_name"
+    echo "passed" > "$status_file"
+    return 0
 }

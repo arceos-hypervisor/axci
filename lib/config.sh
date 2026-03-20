@@ -223,14 +223,13 @@ DEFAULT_TARGETS='[
     "type": "board",
     "arch": "x86_64",
     "board": "x86_64-pc",
-    "repo": {"url": "https://github.com/arceos-hypervisor/axvisor", "branch": "master"},
+    "repo": {"url": "https://github.com/qclic/arceos-bqs.git", "branch": "pcie_dev"},
     "build": {"command": "", "timeout_minutes": 15},
     "test": {
-      "command": "cargo xtask build",
-      "build_config": "configs/board/x86_64-pc.toml",
+      "mode": "power_cycle_only",
+      "wait_seconds": 180,
+      "command": "make A=examples/helloworld LOG=info PLATFORM=x86_64-pc-oslab",
       "uboot_config": ".github/workflows/uboot.toml",
-      "vmconfigs": "configs/vms/arceos-x86_64-pc-smp1.toml",
-      "vmimage_name": "x86_64-pc_arceos",
       "bin_dir": "/tmp/tftp"
     },
     "patch": {"path_template": "../component"}

@@ -432,6 +432,12 @@ run_test_target() {
         return 2
     fi
 
+    local test_mode=$(echo "$target_config" | jq -r '.test.mode // "normal"')
+    if [ "$test_type" == "board" ] && [ "$test_mode" == "power_cycle_only" ]; then
+        run_board_power_cycle_only_test "$target_config" "$target_name" "$log_file" "$status_file" "$test_dir"
+        return $?
+    fi
+
     # 2. 检查当前组件是否被目标项目使用
     if [[ "$target_name" == axvisor-* ]] || [[ "$target_name" == starry-* ]]; then
         if ! check_component_used "$target_name" "$test_dir"; then
