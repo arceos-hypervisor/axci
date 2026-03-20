@@ -51,6 +51,13 @@ jobs:
           repository: arceos-hypervisor/axci
           path: axci
 
+      - name: Debug axci checkout
+        run: |
+          git -C axci branch --show-current || true
+          git -C axci rev-parse HEAD
+          sed -n '1,160p' axci/check.sh
+          bash axci/check.sh --help
+
       - name: Resolve targets
         id: resolve
         run: |
