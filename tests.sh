@@ -96,6 +96,7 @@ Hypervisor Test Framework - 本地测试脚本
   axvisor-qemu-x86_64-nimbos      测试 axvisor 在 QEMU x86_64 上的 NimbOS 镜像
   axvisor-board-phytiumpi-arceos  测试 axvisor 在 phytiumpi 开发板上的 ArceOS 镜像
   axvisor-board-phytiumpi-linux   测试 axvisor 在 phytiumpi 开发板上的 Linux 镜像
+  axvisor-board-x86_64-pc-arceos  测试 axvisor 在 x86_64-pc 开发板上的 ArceOS 镜像
   axvisor-board-roc-rk3568-pc-arceos  测试 axvisor 在 roc-rk3568-pc 开发板上的 ArceOS 镜像
   axvisor-board-roc-rk3568-pc-linux   测试 axvisor 在 roc-rk3568-pc 开发板上的 Linux 镜像
   starry-riscv64             测试 starry 在 riscv64 架构下

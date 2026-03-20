@@ -223,6 +223,9 @@ setup_board_defconfig() {
                 axvisor-board-phytiumpi-linux)
                     fs_vm_configs='["configs/vms/linux-aarch64-e2000-smp1.toml"]'
                     ;;
+                axvisor-board-x86_64-pc-arceos)
+                    fs_vm_configs='["configs/vms/arceos-x86_64-pc-smp1.toml"]'
+                    ;;
                 axvisor-board-roc-rk3568-pc-arceos)
                     fs_vm_configs='["configs/vms/arceos-aarch64-rk3568-smp1.toml"]'
                     ;;
