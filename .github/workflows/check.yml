@@ -77,10 +77,12 @@ jobs:
       - name: Checkout caller repo
         uses: actions/checkout@v5
 
-      - name: Clone test framework
-        run: |
-          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
-          chmod +x axci/check.sh
+      - name: Checkout axci
+        uses: actions/checkout@v5
+        with:
+          repository: arceos-hypervisor/axci
+          ref: ndev
+          path: axci
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
