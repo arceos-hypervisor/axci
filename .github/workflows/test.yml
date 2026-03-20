@@ -31,10 +31,11 @@ jobs:
       - name: Checkout component
         uses: actions/checkout@v5
 
-      - name: Clone test framework
-        run: |
-          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
-          chmod +x axci/tests.sh
+      - name: Checkout axci
+        uses: actions/checkout@v5
+        with:
+          repository: arceos-hypervisor/axci
+          path: axci
 
       - name: Detect test targets
         id: detect
