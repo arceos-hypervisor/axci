@@ -46,6 +46,11 @@ LIST_AUTO=false
 USE_FS_MODE=false
 PRINT_OUTPUT=false
 UNIT_TEST_TRIPLES=""
+AUTO_TARGET=false
+BASE_REF="origin/main"
+SKIP_ALL=false
+TEST_TARGET_RULES_FILE="$FRAMEWORK_DIR/configs/test-target-rules.json"
+TARGET_RULES_JSON=""
 
 # 帮助信息
 show_help() {
@@ -76,6 +81,8 @@ Hypervisor Test Framework - 本地测试脚本
   --list-auto                列出自动检测的测试目标 (JSON 格式)
   --fs                       使用文件系统模式，不修改配置文件
   --print                    打印 U-Boot 和串口输出到命令行
+  --auto-target              根据 git 变更自动选择测试目标 (读取 configs/test-target-rules.json)
+  --base-ref REF             自动选择目标时用于对比的基线 (默认: origin/main)
   -h, --help                 显示此帮助
 
 测试模式 (位置参数):
@@ -112,6 +119,7 @@ Hypervisor Test Framework - 本地测试脚本
   test.sh integration --targets aarch64-unknown-none-softfloat  # 指定目标
   test.sh integration --suite axvisor-qemu        # 仅 axvisor-qemu 系列
   test.sh --dry-run -v                            # 显示将要执行的命令
+  test.sh --auto-target --base-ref origin/main    # 根据变更自动选择
 
 EOF
 }
@@ -187,6 +195,14 @@ parse_args() {
             --print)
                 PRINT_OUTPUT=true
                 shift
+                ;;
+            --auto-target)
+                AUTO_TARGET=true
+                shift
+                ;;
+            --base-ref)
+                BASE_REF="$2"
+                shift 2
                 ;;
             -h|--help)
                 show_help
@@ -284,6 +300,259 @@ resolve_unit_test_targets() {
     UNIT_TEST_TRIPLES="${triples[*]}"
 }
 
+# ────────────────────────────────────────────────────────────────
+# 规则驱动自动目标选择 (--auto-target)
+# ────────────────────────────────────────────────────────────────
+
+load_test_target_rules() {
+    if [ -n "$TARGET_RULES_JSON" ]; then
+        return 0
+    fi
+
+    local component_rules=""
+    if [ -n "$COMPONENT_DIR" ]; then
+        component_rules="$COMPONENT_DIR/.github/axci-test-target-rules.json"
+    else
+        component_rules=".github/axci-test-target-rules.json"
+    fi
+    if [ -f "$component_rules" ]; then
+        TEST_TARGET_RULES_FILE="$component_rules"
+    fi
+
+    if [ ! -f "$TEST_TARGET_RULES_FILE" ]; then
+        log_warn "自动目标选择规则文件不存在: $TEST_TARGET_RULES_FILE，回退为 all"
+        return 1
+    fi
+
+    if ! jq -e '
+        .non_code and .run_all_patterns and .selection_rules and .target_order
+    ' "$TEST_TARGET_RULES_FILE" > /dev/null 2>&1; then
+        log_warn "自动目标选择规则文件格式无效: $TEST_TARGET_RULES_FILE，回退为 all"
+        return 1
+    fi
+
+    TARGET_RULES_JSON="$(jq -c . "$TEST_TARGET_RULES_FILE")"
+    return 0
+}
+
+is_non_code_file() {
+    local path="$1"
+    [ -z "$TARGET_RULES_JSON" ] && return 1
+    echo "$TARGET_RULES_JSON" | jq -e --arg path "$path" '
+        (.non_code.dirs  | any(. as $d | $path | startswith($d))) or
+        (.non_code.exts  | any(. as $e | $path | endswith($e))) or
+        (.non_code.files | any(. as $f | $path == $f))
+    ' > /dev/null 2>&1
+}
+
+get_changed_files_for_auto_target() {
+    local files=""
+    if files=$(git diff --name-only "$BASE_REF" 2>/dev/null); then
+        printf '%s\n' "$files"
+        return 0
+    fi
+    log_warn "自动目标选择: base-ref '$BASE_REF' 不可用，回退到 HEAD~1"
+    if files=$(git diff --name-only HEAD~1 2>/dev/null); then
+        printf '%s\n' "$files"
+        return 0
+    fi
+    return 1
+}
+
+auto_detect_test_targets() {
+    load_test_target_rules || {
+        log_warn "自动目标选择: 规则加载失败，回退 all"
+        return
+    }
+
+    # 优先使用 Rust 引擎 axci-affected
+    local axci_root
+    axci_root="$(cd "$(dirname "$0")" && pwd)"
+    local affected_bin="$axci_root/axci-affected/target/release/axci-affected"
+    if [ -x "$affected_bin" ]; then
+        local engine_out
+        engine_out="$("$affected_bin" "$COMPONENT_DIR" "$BASE_REF" "$TEST_TARGET_RULES_FILE" 2>/dev/null)" || true
+        if [ -n "$engine_out" ] && echo "$engine_out" | jq -e '.skip_all != null and .targets != null' >/dev/null 2>&1; then
+            if [ "$(echo "$engine_out" | jq -r '.skip_all')" = "true" ]; then
+                log "自动目标选择 (axci-affected): 跳过所有测试"
+                SKIP_ALL=true
+                return
+            fi
+            local targets_csv
+            targets_csv="$(echo "$engine_out" | jq -r '.targets[]?' 2>/dev/null | paste -sd, -)"
+            if [ -n "$targets_csv" ]; then
+                log "自动目标选择 (axci-affected): $targets_csv"
+                FILTER_SUITE="$targets_csv"
+                return
+            fi
+            log_warn "自动目标选择 (axci-affected): 无目标，回退 all"
+            return
+        fi
+    fi
+
+    # 依赖感知：affected_crates.sh
+    local changed_crates_json="[]"
+    local affected_crates_json="[]"
+    local file_to_crate_json="{}"
+    local affected_script="$axci_root/scripts/affected_crates.sh"
+    if [ -f "$affected_script" ]; then
+        local run_all_crates_json
+        run_all_crates_json="$(echo "$TARGET_RULES_JSON" | jq -c '.run_all_crates // []' 2>/dev/null || echo '[]')"
+        local crates_output
+        crates_output="$("$affected_script" "$COMPONENT_DIR" "$BASE_REF" 2>/dev/null || true)"
+        if [ -n "$crates_output" ] && echo "$crates_output" | jq -e '.changed_crates != null' >/dev/null 2>&1; then
+            changed_crates_json="$(echo "$crates_output" | jq -c '.changed_crates')"
+            affected_crates_json="$(echo "$crates_output" | jq -c '.affected_crates')"
+            file_to_crate_json="$(echo "$crates_output" | jq -c '.file_to_crate // {}')"
+            log_debug "依赖感知: changed=$changed_crates_json affected=$affected_crates_json"
+        fi
+    fi
+
+    local changed_files
+    changed_files="$(get_changed_files_for_auto_target)" || {
+        log_warn "自动目标选择失败，回退为 all"
+        return
+    }
+
+    local changed_count=0
+    while IFS= read -r _line; do [ -z "$_line" ] && continue; changed_count=$((changed_count + 1)); done <<< "$changed_files"
+    log "自动目标选择: base_ref=$BASE_REF, changed_files=$changed_count"
+    if [[ "$VERBOSE" == true ]]; then
+        while IFS= read -r f; do [ -z "$f" ] && continue; log_debug "  changed: $f"; done <<< "$changed_files"
+    fi
+
+    if [ -z "$changed_files" ]; then
+        log "自动目标选择: 未检测到变更，跳过所有测试"
+        SKIP_ALL=true
+        return
+    fi
+
+    local has_code_change=false
+    local needs_all=false
+    local -A selected_target_map=()
+
+    mapfile -t run_all_patterns < <(echo "$TARGET_RULES_JSON" | jq -r '.run_all_patterns[]')
+    mapfile -t run_all_exclude_patterns < <(echo "$TARGET_RULES_JSON" | jq -r '.run_all_exclude_patterns[]?')
+    mapfile -t selection_rule_rows < <(echo "$TARGET_RULES_JSON" | jq -r '.selection_rules[] | [.id, (.patterns | join("\u001f")), (.targets | join("\u001f"))] | @tsv')
+    mapfile -t target_order < <(echo "$TARGET_RULES_JSON" | jq -r '.target_order[]')
+
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        is_non_code_file "$f" || has_code_change=true
+
+        for p in "${run_all_patterns[@]}"; do
+            if [[ "$f" == $p ]]; then
+                local excluded=false
+                for ex in "${run_all_exclude_patterns[@]}"; do
+                    [[ "$f" == $ex ]] && excluded=true && break
+                done
+                [ "$excluded" = false ] && needs_all=true
+                break
+            fi
+        done
+
+        for row in "${selection_rule_rows[@]}"; do
+            IFS=$'\t' read -r _rule_id patterns_blob targets_blob <<< "$row"
+            IFS=$'\x1f' read -r -a patterns <<< "$patterns_blob"
+            local matched=false
+            for p in "${patterns[@]}"; do [[ "$f" == $p ]] && matched=true && break; done
+            if [ "$matched" = true ]; then
+                IFS=$'\x1f' read -r -a targets <<< "$targets_blob"
+                for t in "${targets[@]}"; do selected_target_map["$t"]=1; done
+            fi
+        done
+    done <<< "$changed_files"
+
+    if [ "$has_code_change" = false ]; then
+        log "自动目标选择: 仅文档/非代码变更，跳过所有测试"
+        SKIP_ALL=true
+        return
+    fi
+
+    # 依赖感知: run_all_crates
+    local run_all_crates_json
+    run_all_crates_json="$(echo "$TARGET_RULES_JSON" | jq -c '.run_all_crates // []' 2>/dev/null || echo '[]')"
+    if [ "$run_all_crates_json" != "[]" ] && [ "$changed_crates_json" != "[]" ]; then
+        if echo "$run_all_crates_json" | jq -e --argjson changed "$changed_crates_json" \
+            'any(.[]; $changed | index(.))' >/dev/null 2>&1; then
+            needs_all=true
+        fi
+    fi
+
+    if [ "$needs_all" = true ]; then
+        log "自动目标选择: 命中全量规则，运行 all"
+        return
+    fi
+
+    # 依赖感知: crate_rules
+    local crate_rules_json
+    crate_rules_json="$(echo "$TARGET_RULES_JSON" | jq -c '.crate_rules // []' 2>/dev/null || echo '[]')"
+    if [ "$crate_rules_json" != "[]" ]; then
+        while IFS= read -r rule; do
+            [ -z "$rule" ] && continue
+            local crates_json direct_only targets_json check_json
+            crates_json="$(echo "$rule" | jq -c '.crates // []')"
+            direct_only="$(echo "$rule" | jq -r '.direct_only // false')"
+            targets_json="$(echo "$rule" | jq -c '.targets // []')"
+            check_json="$affected_crates_json"
+            [ "$direct_only" = "true" ] && check_json="$changed_crates_json"
+            for crate in $(echo "$crates_json" | jq -r '.[]'); do
+                if echo "$check_json" | jq -e --arg c "$crate" 'index($c) != null' >/dev/null 2>&1; then
+                    for t in $(echo "$targets_json" | jq -r '.[]'); do selected_target_map["$t"]=1; done
+                    break
+                fi
+            done
+        done < <(echo "$crate_rules_json" | jq -c '.[]?')
+    fi
+
+    # 依赖感知: crate_path_rules
+    local crate_path_rules_json
+    crate_path_rules_json="$(echo "$TARGET_RULES_JSON" | jq -c '.crate_path_rules // []' 2>/dev/null || echo '[]')"
+    if [ "$crate_path_rules_json" != "[]" ]; then
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            local file_crate
+            file_crate="$(echo "$file_to_crate_json" | jq -r --arg f "$f" '.[$f] // empty' 2>/dev/null || true)"
+            [ -z "$file_crate" ] && continue
+            while IFS= read -r rule; do
+                [ -z "$rule" ] && continue
+                local crates_json direct_only targets_json path_patterns_json check_json
+                crates_json="$(echo "$rule" | jq -c '.crates // []')"
+                direct_only="$(echo "$rule" | jq -r '.direct_only // false')"
+                targets_json="$(echo "$rule" | jq -c '.targets // []')"
+                path_patterns_json="$(echo "$rule" | jq -c '.path_patterns // []')"
+                check_json="$affected_crates_json"
+                [ "$direct_only" = "true" ] && check_json="$changed_crates_json"
+                echo "$check_json" | jq -e --arg c "$file_crate" 'index($c) != null' >/dev/null 2>&1 || continue
+                echo "$crates_json" | jq -e --arg c "$file_crate" 'index($c) != null' >/dev/null 2>&1 || continue
+                local matched_path=false
+                for p in $(echo "$path_patterns_json" | jq -r '.[]'); do
+                    [[ "$f" == $p ]] && matched_path=true && break
+                done
+                if [ "$matched_path" = true ]; then
+                    for t in $(echo "$targets_json" | jq -r '.[]'); do selected_target_map["$t"]=1; done
+                    break
+                fi
+            done < <(echo "$crate_path_rules_json" | jq -c '.[]?')
+        done <<< "$changed_files"
+    fi
+
+    local selected=()
+    for t in "${target_order[@]}"; do
+        [ -n "${selected_target_map[$t]:-}" ] && selected+=("$t")
+    done
+
+    if [ ${#selected[@]} -eq 0 ]; then
+        log_warn "自动目标选择: 无法精确匹配，保守回退 all"
+        return
+    fi
+
+    FILTER_SUITE="$(IFS=,; echo "${selected[*]}")"
+    log "自动目标选择: $FILTER_SUITE"
+}
+
+# ────────────────────────────────────────────────────────────────
+
 # 解析 --suite 为匹配的 test_target 名称列表
 # 优先级: CLI --suite > config.json test_targets > 全部
 # 支持精确名称和前缀匹配 (如 "axvisor-qemu" 匹配 "axvisor-qemu-*")
@@ -325,6 +594,10 @@ resolve_suites() {
 # 不匹配架构的套件输出跳过提示
 # 前置条件: resolve_targets() 已被调用
 get_test_targets() {
+    if [ "$SKIP_ALL" == true ]; then
+        echo ""
+        return
+    fi
     local resolved_suites=$(resolve_suites)
     local targets=()
 
@@ -524,9 +797,9 @@ run_test_target() {
             full_test_cmd=$(prepare_board_command "$target_config")
 
         elif [[ "$target_name" == starry-* ]]; then
-            # Starry 测试
+            # Starry 测试：使用 ci-test.py 避免 make run 长驻超时
             local arch=$(echo "$target_config" | jq -r '.arch')
-            full_test_cmd="make ARCH=$arch run"
+            full_test_cmd="scripts/ci-test.py $arch"
         fi
 
         if [ "$DRY_RUN" == true ]; then
@@ -534,6 +807,23 @@ run_test_target() {
         else
             cd "$test_dir"
             export RUST_LOG=debug
+
+            # Starry 前置检查: disk.img 必须存在
+            if [[ "$target_name" == starry-* ]] && [ ! -f "$test_dir/disk.img" ]; then
+                local starry_arch
+                starry_arch="$(echo "$target_config" | jq -r '.arch // empty')"
+                local arch_rootfs="$test_dir/rootfs-${starry_arch}.img"
+                if [ -n "$starry_arch" ] && [ -f "$arch_rootfs" ]; then
+                    ln -sf "rootfs-${starry_arch}.img" "$test_dir/disk.img"
+                    log "  检测到 rootfs-${starry_arch}.img，已链接为 disk.img"
+                fi
+            fi
+            if [[ "$target_name" == starry-* ]] && [ ! -f "$test_dir/disk.img" ]; then
+                log_error "  缺少 rootfs 镜像: $test_dir/disk.img"
+                echo "failed" > "$status_file"
+                cd "$COMPONENT_DIR"
+                return 1
+            fi
 
             # 使用成功检测函数运行测试
             if [ "$test_type" == "board" ]; then
@@ -756,6 +1046,15 @@ main() {
 
     check_dependencies
     load_config
+
+    if [ "$AUTO_TARGET" == true ]; then
+        auto_detect_test_targets
+        if [ "$SKIP_ALL" == true ]; then
+            log_success "自动目标选择: 无需测试，跳过"
+            exit 0
+        fi
+    fi
+
     resolve_targets
     resolve_unit_test_targets
 

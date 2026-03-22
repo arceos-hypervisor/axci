@@ -3,7 +3,8 @@
 #
 # Inputs:
 #   crate_name: Component crate name (auto-detected from Cargo.toml if empty)
-#   test_targets: Test targets to run (comma-separated or "all")
+#   test_targets: Test targets (comma-separated, "all", or "auto" for rule-driven selection)
+#   base_ref: Base ref for auto target detection
 
 name: Test
 
@@ -15,9 +16,39 @@ on:
         required: false
         default: ''
         type: string
+      test_targets:
+        description: 'Test targets (comma-separated, "all", or "auto" for rule-driven detection)'
+        required: false
+        default: 'all'
+        type: string
+      base_ref:
+        description: 'Base ref for auto target detection (used when test_targets=auto)'
+        required: false
+        default: 'origin/main'
+        type: string
+      runs_on:
+        description: 'JSON array for runner labels, e.g. ["ubuntu-latest"] or ["self-hosted","linux","docker"]'
+        required: false
+        default: '["self-hosted"]'
+        type: string
+      axci_ref:
+        description: 'Git ref used to checkout axci test framework'
+        required: false
+        default: 'main'
+        type: string
+      axvisor_repo:
+        description: 'Repository used for AxVisor integration tests'
+        required: false
+        default: 'arceos-hypervisor/axvisor'
+        type: string
+      axvisor_ref:
+        description: 'Git ref used when checking out axvisor_repo'
+        required: false
+        default: 'master'
+        type: string
 
 jobs:
-  # 检测测试目标列表
+  # 检测测试目标列表（支持 auto 规则驱动选择）
   detect-targets:
     name: Detect Targets
     runs-on: self-hosted
@@ -27,35 +58,96 @@ jobs:
       targets: ${{ steps.detect.outputs.targets }}
       has-targets: ${{ steps.detect.outputs.has-targets }}
       matrix: ${{ steps.detect.outputs.matrix }}
+      selection_mode: ${{ steps.detect.outputs.selection_mode }}
+      auto_reason: ${{ steps.detect.outputs.auto_reason }}
     steps:
+      - name: Harden git network settings
+        run: |
+          git config --global http.version HTTP/1.1
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
+          git config --global http.postBuffer 104857600
+
       - name: Checkout component
         uses: actions/checkout@v5
+        timeout-minutes: 10
+        with:
+          fetch-depth: 0
 
       - name: Clone test framework
         run: |
-          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          git clone --depth 1 --branch ${{ inputs.axci_ref }} https://github.com/yoinspiration/axci.git axci
           chmod +x axci/tests.sh
+
+      - name: Install Rust for dependency-aware detection
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ''
+        continue-on-error: true
+
+      - name: Build axci-affected engine
+        id: build_axci_affected
+        run: |
+          if [ ! -d "axci/axci-affected" ]; then
+            echo "axci-affected source not found, skip engine build"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          (cd axci/axci-affected && cargo build --release)
+          echo "built=true" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
 
       - name: Detect test targets
         id: detect
         run: |
-          # 获取测试目标列表
-          TARGETS=$(./axci/tests.sh --list-auto)
+          INPUT="${{ inputs.test_targets }}"
+          BASE_REF="${{ inputs.base_ref }}"
+          AUTO_REASON="manual_input"
+          SELECTION_MODE="manual"
+
+          if [ "$INPUT" = "auto" ] || [ "$INPUT" = "__auto__" ]; then
+            SELECTION_MODE="auto"
+            # 使用 tests.sh --auto-target 读取规则文件做目标选择
+            AUTO_OUTPUT=$(./axci/tests.sh --list-auto --auto-target --base-ref "$BASE_REF" -c . 2>/dev/null || true)
+            if [ -n "$AUTO_OUTPUT" ] && echo "$AUTO_OUTPUT" | jq -e 'type == "array"' >/dev/null 2>&1; then
+              TARGETS="$AUTO_OUTPUT"
+              if [ "$TARGETS" = "[]" ]; then
+                AUTO_REASON="auto_skip_all"
+              else
+                AUTO_REASON="auto_rule_selected"
+              fi
+            else
+              # 回退：直接用 --list-auto（无规则过滤）
+              TARGETS=$(./axci/tests.sh --list-auto -c . 2>/dev/null || echo '[]')
+              AUTO_REASON="auto_fallback_list_auto"
+            fi
+          elif [ "$INPUT" = "all" ] || [ -z "$INPUT" ]; then
+            TARGETS=$(./axci/tests.sh --list-auto -c . 2>/dev/null || echo '[]')
+            SELECTION_MODE="all"
+          else
+            # 手动指定的目标列表
+            TARGETS=$(echo "$INPUT" | tr ',' '\n' | jq -R . | jq -s -c)
+            SELECTION_MODE="manual"
+          fi
+
+          # 确保 TARGETS 是有效 JSON 数组
+          if ! echo "$TARGETS" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            TARGETS='[]'
+          fi
+
           echo "targets=$TARGETS" >> $GITHUB_OUTPUT
-          
-          # 生成 matrix 配置，包含 target 和对应的 runner
+          echo "auto_reason=$AUTO_REASON" >> $GITHUB_OUTPUT
+          echo "selection_mode=$SELECTION_MODE" >> $GITHUB_OUTPUT
+
+          # 生成 matrix 配置
           MATRIX="["
           first=true
-          
-          # 解析每个目标并分配对应的 runner
           for target in $(echo "$TARGETS" | jq -r '.[]'); do
             if [ "$first" = true ]; then
               first=false
             else
               MATRIX+=","
             fi
-            
-          # 根据目标类型确定 runner (self-hosted runner 需要数组格式)
             if [[ "$target" == *"board-phytiumpi"* ]]; then
               runner='["self-hosted", "phytiumpi"]'
               board='"phytiumpi"'
@@ -63,24 +155,40 @@ jobs:
               runner='["self-hosted", "roc-rk3568-pc"]'
               board='"roc-rk3568-pc"'
             else
-              # QEMU 测试和其他测试使用 self-hosted
               runner='"self-hosted"'
               board='null'
             fi
-            
             MATRIX+="{\"target\":\"$target\",\"runner\":$runner,\"board\":$board}"
           done
           MATRIX+="]"
-          
+
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
-          echo "Generated matrix: $MATRIX"
-          
+
           if [ "$TARGETS" = "[]" ]; then
             echo "has-targets=false" >> $GITHUB_OUTPUT
           else
             echo "has-targets=true" >> $GITHUB_OUTPUT
           fi
+
+          echo "Input: $INPUT"
+          echo "Selection mode: $SELECTION_MODE"
+          echo "Auto reason: $AUTO_REASON"
           echo "Detected targets: $TARGETS"
+          echo "Generated matrix: $MATRIX"
+
+      - name: Write detect summary
+        run: |
+          {
+            echo "## Target Selection"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| input | \`${{ inputs.test_targets }}\` |"
+            echo "| selection_mode | \`${{ steps.detect.outputs.selection_mode }}\` |"
+            echo "| auto_reason | \`${{ steps.detect.outputs.auto_reason }}\` |"
+            echo "| targets | \`${{ steps.detect.outputs.targets }}\` |"
+            echo "| has-targets | \`${{ steps.detect.outputs.has-targets }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # 单元测试
   unit-test:
@@ -89,12 +197,20 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      - name: Harden git network settings
+        run: |
+          git config --global http.version HTTP/1.1
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
+          git config --global http.postBuffer 104857600
+
       - name: Checkout component
         uses: actions/checkout@v5
+        timeout-minutes: 10
 
       - name: Clone test framework
         run: |
-          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
+          git clone --depth 1 --branch ${{ inputs.axci_ref }} https://github.com/yoinspiration/axci.git axci
           chmod +x axci/tests.sh
 
       - name: Run unit tests
@@ -114,12 +230,20 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.detect-targets.outputs.matrix) }}
     steps:
+      - name: Harden git network settings
+        run: |
+          git config --global http.version HTTP/1.1
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
+          git config --global http.postBuffer 104857600
+
       - name: Checkout component
         uses: actions/checkout@v5
+        timeout-minutes: 10
 
       - name: Clone test framework
         run: |
-          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
+          git clone --depth 1 --branch ${{ inputs.axci_ref }} https://github.com/yoinspiration/axci.git axci
           chmod +x axci/tests.sh
 
       - name: Run test for ${{ matrix.target }}
@@ -136,4 +260,6 @@ jobs:
       - name: No tests to run
         run: |
           echo "No test targets detected for this component."
-          echo "Check rust-toolchain.toml or component configuration."
+          echo "Selection mode: ${{ needs.detect-targets.outputs.selection_mode }}"
+          echo "Auto reason: ${{ needs.detect-targets.outputs.auto_reason }}"
+          echo "Check rust-toolchain.toml, component configuration, or test-target-rules.json."
