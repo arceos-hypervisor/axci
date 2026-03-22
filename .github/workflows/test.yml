@@ -742,9 +742,10 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # 在 checkout、依赖、board_guard 之后延时，便于先看到 Set up job / 前面步骤的日志，再演示同板卡串行
+      # 板卡 job 专用：在 checkout / board_guard 之后延时，先出完前面步骤日志再 sleep。
+      # 条件仅 matrix.type==board（不依赖 run_board），否则 uboot.toml 未通过 guard 时本步被跳过，看不到步骤名、也不会等 90s。
       - name: Demo delay (serialization visibility)
-        if: matrix.type == 'board' && steps.board_guard.outputs.run_board == 'true'
+        if: matrix.type == 'board'
         run: |
           echo "Holding board for 90s to demonstrate serial execution (同板卡串行)..."
           sleep 90
