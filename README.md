@@ -33,6 +33,8 @@ axci/
 │       └── release.yml      # 发布
 ├── configs/
 │   └── test-target-rules.json # auto-target 路径规则
+├── docs/
+│   └── 工作原理.md             # 依赖感知工作原理（端到端）
 ├── tests.sh                  # 本地测试入口
 └── README.md
 ```
@@ -287,9 +289,10 @@ git push origin v1.0.0-pre.1
 
 ### 依赖感知文档导航
 
-为避免“项目案例”和“通用设计”混淆，依赖感知相关说明拆分为两份：
+为避免“项目案例”和“通用设计”混淆，依赖感知相关说明拆分为多份：
 
-- `dependency-aware-testing.md`：axci 通用设计（推荐优先阅读）
+- `docs/工作原理.md`：**端到端工作原理**（五步数据流、三层架构、规则求值顺序、不覆盖行为）
+- `dependency-aware-testing.md`：axci 通用设计（规则字段、接入与模板）
 - `axvisor-case-study.md`：AxVisor 落地案例（背景与示例）
 
 **执行过程：**

@@ -207,5 +207,6 @@ axci 的依赖感知不把业务规则写死在代码里，而是把“项目差
 
 ## 10. 相关文档
 
+- **工作原理（端到端数据流与求值顺序）**：[`docs/工作原理.md`](./docs/工作原理.md)
 - 通用设计（本文）：`dependency-aware-testing.md`
 - 案例说明（AxVisor）：`axvisor-case-study.md`
