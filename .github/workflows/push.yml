@@ -1,0 +1,143 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Notify Parent Repository Workflow (Reusable)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Notifies parent repository to perform subtree pull when component updates.
+#
+# 【Usage】
+# ─────────────────────────────────────────────────────────────────────────────
+# jobs:
+#   notify-parent:
+#     uses: arceos-hypervisor/axci/.github/workflows/push.yml@main
+#     with:
+#       parent_repo: "your-org/your-repo"
+#     secrets:
+#       PARENT_REPO_TOKEN: ${{ secrets.PARENT_REPO_TOKEN }}
+#
+# 【Token Requirements】
+# ─────────────────────────────────────────────────────────────────────────────
+# PARENT_REPO_TOKEN requires Classic Personal Access Token with:
+#   - repo (Full control of private repositories)
+#   or
+#   - Fine-grained token: Contents (Read and Write)
+#
+# 【Workflow】
+# ─────────────────────────────────────────────────────────────────────────────
+# Component push → This workflow → Parent repo API → Parent subtree pull
+#
+# 【Prerequisites】
+# ─────────────────────────────────────────────────────────────────────────────
+# - Parent repository must have a workflow listening to repository_dispatch
+#   with event_type: "subtree-update"
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Notify Parent Repository
+
+on:
+  workflow_call:
+    inputs:
+      parent_repo:
+        description: 'Parent repository path (e.g., owner/repo)'
+        required: false
+        default: 'rcore-os/tgoskits'
+        type: string
+    secrets:
+      PARENT_REPO_TOKEN:
+        description: 'Token for accessing parent repository'
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get repository info
+        id: repo
+        env:
+          GH_REPO_NAME: ${{ github.event.repository.name }}
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_SERVER_URL: ${{ github.server_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          # 直接使用 GitHub Actions 内置变量，通过 env 传入避免 shell 注入
+          COMPONENT="$GH_REPO_NAME"
+          BRANCH="$GH_REF_NAME"
+          # 构造标准 HTTPS URL，供主仓库按 URL 精确匹配 repos.list
+          REPO_URL="${GH_SERVER_URL}/${GH_REPOSITORY}"
+
+          echo "component=${COMPONENT}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "repo_url=${REPO_URL}" >> $GITHUB_OUTPUT
+
+          echo "Component: ${COMPONENT}"
+          echo "Branch: ${BRANCH}"
+          echo "Repo URL: ${REPO_URL}"
+
+      - name: Notify parent repository
+        env:
+          PARENT_REPO: ${{ inputs.parent_repo }}
+          DISPATCH_TOKEN: ${{ secrets.PARENT_REPO_TOKEN }}
+          # 将用户可控内容通过 env 传入，避免直接插值到 shell 脚本
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          GIT_ACTOR: ${{ github.actor }}
+          GIT_SHA: ${{ github.sha }}
+          STEP_COMPONENT: ${{ steps.repo.outputs.component }}
+          STEP_BRANCH: ${{ steps.repo.outputs.branch }}
+          STEP_REPO_URL: ${{ steps.repo.outputs.repo_url }}
+        run: |
+          COMPONENT="$STEP_COMPONENT"
+          BRANCH="$STEP_BRANCH"
+          REPO_URL="$STEP_REPO_URL"
+
+          echo "Notifying parent repository about update in ${COMPONENT}:${BRANCH}"
+
+          # 使用 jq 安全构建 JSON，避免 commit message 中任何特殊字符导致注入
+          PAYLOAD=$(jq -n \
+            --arg component "$COMPONENT" \
+            --arg branch    "$BRANCH" \
+            --arg repo_url  "$REPO_URL" \
+            --arg commit    "$GIT_SHA" \
+            --arg message   "$COMMIT_MESSAGE" \
+            --arg author    "$GIT_ACTOR" \
+            '{
+              event_type: "subtree-update",
+              client_payload: {
+                component: $component,
+                branch:    $branch,
+                repo_url:  $repo_url,
+                commit:    $commit,
+                message:   $message,
+                author:    $author
+              }
+            }')
+
+          curl --fail --show-error -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${DISPATCH_TOKEN}" \
+            https://api.github.com/repos/${PARENT_REPO}/dispatches \
+            -d "$PAYLOAD"
+
+          echo "Notification sent successfully"
+
+      - name: Create summary
+        env:
+          PARENT_REPO: ${{ inputs.parent_repo }}
+          STEP_COMPONENT: ${{ steps.repo.outputs.component }}
+          STEP_BRANCH: ${{ steps.repo.outputs.branch }}
+          STEP_REPO_URL: ${{ steps.repo.outputs.repo_url }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_ACTOR: ${{ github.actor }}
+        run: |
+          COMPONENT="$STEP_COMPONENT"
+          BRANCH="$STEP_BRANCH"
+          REPO_URL="$STEP_REPO_URL"
+
+          echo "## Notification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Parent Repository**: ${PARENT_REPO}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Component**: ${COMPONENT}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${BRANCH}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repo URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: \`${GIT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author**: ${GIT_ACTOR}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Notification sent" >> $GITHUB_STEP_SUMMARY

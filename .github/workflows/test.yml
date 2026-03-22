@@ -1,16 +1,9 @@
 # Integration Test Workflow
-# Runs integration tests by patching component into test targets
+# Runs integration tests by calling tests.sh script
 #
-# Default test targets: axvisor, starry
 # Inputs:
-#   crate_name: Component crate name (required, auto-detected if empty)
+#   crate_name: Component crate name (auto-detected from Cargo.toml if empty)
 #   test_targets: Test targets to run (comma-separated or "all")
-#
-# Workflow:
-# 1. Checkout component (the caller repo)
-# 2. Checkout test target (axvisor/starry)
-# 3. Patch target's Cargo.toml to use component
-# 4. Run tests in target directory
 
 name: Test
 
@@ -22,839 +15,125 @@ on:
         required: false
         default: ''
         type: string
-      test_targets:
-        description: 'Test targets (comma-separated or "all")'
-        required: false
-        default: 'all'
-        type: string
-      base_ref:
-        description: 'Base ref for auto target detection'
-        required: false
-        default: 'origin/main'
-        type: string
-      runs_on:
-        description: 'JSON array for runner labels, e.g. ["ubuntu-latest"] or ["self-hosted","linux","docker"]'
-        required: false
-        default: '["ubuntu-latest"]'
-        type: string
-      axci_ref:
-        description: 'Git ref used to checkout yoinspiration/axci rules repository'
-        required: false
-        default: 'main'
-        type: string
-      axvisor_repo:
-        description: 'Repository used for AxVisor integration tests'
-        required: false
-        default: 'arceos-hypervisor/axvisor'
-        type: string
-      axvisor_ref:
-        description: 'Git ref used when checking out axvisor_repo'
-        required: false
-        default: 'master'
-        type: string
 
 jobs:
-  detect:
-    name: "Detect test matrix"
-    runs-on: ubuntu-latest
+  # 检测测试目标列表
+  detect-targets:
+    name: Detect Targets
+    runs-on: self-hosted
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     outputs:
-      axvisor_matrix: ${{ steps.matrix.outputs.axvisor_matrix }}
-      starry_matrix: ${{ steps.matrix.outputs.starry_matrix }}
-      skip_all: ${{ steps.matrix.outputs.skip_all }}
-      selection_mode: ${{ steps.matrix.outputs.selection_mode }}
-      requested_targets: ${{ steps.matrix.outputs.requested_targets }}
-      resolved_targets: ${{ steps.matrix.outputs.resolved_targets }}
-      auto_reason: ${{ steps.matrix.outputs.auto_reason }}
-      axvisor_count: ${{ steps.matrix.outputs.axvisor_count }}
-      starry_count: ${{ steps.matrix.outputs.starry_count }}
+      targets: ${{ steps.detect.outputs.targets }}
+      has-targets: ${{ steps.detect.outputs.has-targets }}
+      matrix: ${{ steps.detect.outputs.matrix }}
     steps:
-      - name: Harden git network settings
-        run: |
-          git config --global http.version HTTP/1.1
-          git config --global http.lowSpeedLimit 1000
-          git config --global http.lowSpeedTime 60
-          git config --global http.postBuffer 104857600
-
-      - name: Checkout component repository
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          fetch-depth: 0
-          path: component
-
-      - name: Checkout axci rules
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          repository: yoinspiration/axci
-          ref: ${{ inputs.axci_ref }}
-          path: axci-rules
-
-      - name: Install Rust for dependency-aware detection
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: ''
-        continue-on-error: true
-
-      - name: Build axci-affected engine
-        id: build_axci_affected
-        run: |
-          if [ ! -d "axci-rules/axci-affected" ]; then
-            echo "axci-affected source not found, skip engine build"
-            echo "built=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          (cd axci-rules/axci-affected && cargo build --release)
-          echo "built=true" >> "$GITHUB_OUTPUT"
-        continue-on-error: true
-
-      - name: Test axci-affected engine
-        if: steps.build_axci_affected.outcome == 'success' && steps.build_axci_affected.outputs.built == 'true'
-        run: |
-          cd axci-rules/axci-affected
-          cargo test
-
-      - name: Build dynamic matrix from test_targets input
-        id: matrix
-        working-directory: component
-        run: |
-          INPUT="${{ inputs.test_targets }}"
-          BASE_REF="${{ inputs.base_ref }}"
-          # 规则文件优先级：
-          # 1) 组件仓库本地规则: .github/axci-test-target-rules.json
-          # 2) axci 仓库自带默认规则: ../axci-rules/configs/test-target-rules.json
-          RULES_FILE="../axci-rules/configs/test-target-rules.json"
-          if [ -f ".github/axci-test-target-rules.json" ]; then
-            RULES_FILE=".github/axci-test-target-rules.json"
-          fi
-          AFFECTED_SCRIPT="../axci-rules/scripts/affected_crates.sh"
-          TARGETS_JSON="[]"
-          AUTO_REASON="manual_input"
-
-          parse_targets_input() {
-            jq -cn --arg input "$1" '$input | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))'
-          }
-
-          is_non_code_file() {
-            local path="$1"
-            jq -e --arg path "$path" '
-              (.non_code.dirs  | any(. as $d | $path | startswith($d))) or
-              (.non_code.exts  | any(. as $e | $path | endswith($e))) or
-              (.non_code.files | any(. as $f | $path == $f))
-            ' "$RULES_FILE" > /dev/null 2>&1
-          }
-
-          # 依赖感知：若规则含 run_all_crates/crate_rules 且脚本可用，计算 changed/affected crates
-          CHANGED_CRATES_JSON='[]'
-          AFFECTED_CRATES_JSON='[]'
-          FILE_TO_CRATE_JSON='{}'
-          if [ -f "$AFFECTED_SCRIPT" ] && jq -e '.run_all_crates != null or .crate_rules != null or .crate_path_rules != null' "$RULES_FILE" >/dev/null 2>&1; then
-            CRATES_OUTPUT="$("$AFFECTED_SCRIPT" . "$BASE_REF" 2>/dev/null || true)"
-            if [ -n "$CRATES_OUTPUT" ] && echo "$CRATES_OUTPUT" | jq -e '.changed_crates != null' >/dev/null 2>&1; then
-              CHANGED_CRATES_JSON=$(echo "$CRATES_OUTPUT" | jq -c '.changed_crates')
-              AFFECTED_CRATES_JSON=$(echo "$CRATES_OUTPUT" | jq -c '.affected_crates')
-              FILE_TO_CRATE_JSON=$(echo "$CRATES_OUTPUT" | jq -c '.file_to_crate // {}')
-              echo "Dependency-aware: changed_crates=$CHANGED_CRATES_JSON affected_crates=$AFFECTED_CRATES_JSON"
-            fi
-          fi
-
-          if [ "$INPUT" = "auto" ] || [ "$INPUT" = "__auto__" ]; then
-            if [ ! -f "$RULES_FILE" ]; then
-              echo "Rules file not found at $RULES_FILE, fallback to all"
-              TARGETS_JSON='["all"]'
-              AUTO_REASON="rules_missing_fallback_all"
-            else
-              if ! jq -e '
-                .non_code and
-                .run_all_patterns and
-                .selection_rules and
-                .target_order
-              ' "$RULES_FILE" > /dev/null 2>&1; then
-                echo "Rules file is invalid, fallback to all"
-                TARGETS_JSON='["all"]'
-                AUTO_REASON="rules_invalid_fallback_all"
-              else
-                CHANGED_FILES="$(git diff --name-only "$BASE_REF" 2>/dev/null || true)"
-                if [ -z "$CHANGED_FILES" ]; then
-                  echo "base_ref '$BASE_REF' unavailable or no diff, fallback to HEAD~1"
-                  CHANGED_FILES="$(git diff --name-only HEAD~1 2>/dev/null || true)"
-                fi
-
-                if [ -z "$CHANGED_FILES" ]; then
-                  TARGETS_JSON='[]'
-                  AUTO_REASON="no_changes_skip"
-                else
-                  TARGETS_JSON=""
-                  if [ -x "../axci-rules/axci-affected/target/release/axci-affected" ]; then
-                    ENGINE_OUT=$(../axci-rules/axci-affected/target/release/axci-affected . "$BASE_REF" "$RULES_FILE" 2>/dev/null) || true
-                    if [ -n "$ENGINE_OUT" ] && echo "$ENGINE_OUT" | jq -e '.skip_all != null and .targets != null' >/dev/null 2>&1; then
-                      AUTO_REASON="engine"
-                      if [ "$(echo "$ENGINE_OUT" | jq -r '.skip_all')" = "true" ]; then
-                        TARGETS_JSON='[]'
-                      else
-                        TARGETS_JSON=$(echo "$ENGINE_OUT" | jq -c '.targets')
-                      fi
-                    fi
-                  fi
-                  if [ -z "$TARGETS_JSON" ]; then
-                  mapfile -t RUN_ALL_PATTERNS < <(jq -r '.run_all_patterns[]' "$RULES_FILE")
-                  mapfile -t RUN_ALL_EXCLUDE_PATTERNS < <(jq -r '.run_all_exclude_patterns[]?' "$RULES_FILE")
-                  mapfile -t RULE_ROWS < <(jq -r '.selection_rules[] | [.id, (.patterns | join("\u001f")), (.targets | join("\u001f"))] | @tsv' "$RULES_FILE")
-                  mapfile -t TARGET_ORDER < <(jq -r '.target_order[]' "$RULES_FILE")
-                  RUN_ALL_CRATES_JSON=$(jq -c '.run_all_crates // []' "$RULES_FILE")
-                  CRATE_RULES_JSON=$(jq -c '.crate_rules // []' "$RULES_FILE")
-                  CRATE_PATH_RULES_JSON=$(jq -c '.crate_path_rules // []' "$RULES_FILE")
-
-                  HAS_CODE_CHANGE=false
-                  NEEDS_ALL=false
-                  declare -A SELECTED=()
-
-                  # 路径规则
-                  while IFS= read -r f; do
-                    [ -z "$f" ] && continue
-
-                    if ! is_non_code_file "$f"; then
-                      HAS_CODE_CHANGE=true
-                    fi
-
-                    for p in "${RUN_ALL_PATTERNS[@]}"; do
-                      if [[ "$f" == $p ]]; then
-                        EXCLUDED=false
-                        for ex in "${RUN_ALL_EXCLUDE_PATTERNS[@]}"; do
-                          if [[ "$f" == $ex ]]; then
-                            EXCLUDED=true
-                            break
-                          fi
-                        done
-                        if [ "$EXCLUDED" = "false" ]; then
-                          NEEDS_ALL=true
-                        fi
-                        break
-                      fi
-                    done
-
-                    for row in "${RULE_ROWS[@]}"; do
-                      IFS=$'\t' read -r _rule_id patterns_blob targets_blob <<< "$row"
-                      matched=false
-                      IFS=$'\x1f' read -r -a patterns <<< "$patterns_blob"
-                      for p in "${patterns[@]}"; do
-                        if [[ "$f" == $p ]]; then
-                          matched=true
-                          break
-                        fi
-                      done
-                      if [ "$matched" = true ]; then
-                        IFS=$'\x1f' read -r -a targets <<< "$targets_blob"
-                        for t in "${targets[@]}"; do
-                          SELECTED["$t"]=1
-                        done
-                      fi
-                    done
-                  done <<< "$CHANGED_FILES"
-
-                  # 依赖感知：run_all_crates（仅直接修改）
-                  for crate in $(echo "$RUN_ALL_CRATES_JSON" | jq -r '.[]'); do
-                    if echo "$CHANGED_CRATES_JSON" | jq -e --arg c "$crate" 'index($c) != null' >/dev/null 2>&1; then
-                      NEEDS_ALL=true
-                      break
-                    fi
-                  done
-
-                  # 依赖感知：crate_rules（根据 direct_only 用 changed 或 affected）
-                  while IFS= read -r rule; do
-                    [ -z "$rule" ] && continue
-                    crates_json=$(echo "$rule" | jq -c '.crates')
-                    direct_only=$(echo "$rule" | jq -r '.direct_only // false')
-                    targets_json=$(echo "$rule" | jq -c '.targets')
-                    check_json="$AFFECTED_CRATES_JSON"
-                    [ "$direct_only" = "true" ] && check_json="$CHANGED_CRATES_JSON"
-                    for crate in $(echo "$crates_json" | jq -r '.[]'); do
-                      if echo "$check_json" | jq -e --arg c "$crate" 'index($c) != null' >/dev/null 2>&1; then
-                        for t in $(echo "$targets_json" | jq -r '.[]'); do
-                          SELECTED["$t"]=1
-                        done
-                        break
-                      fi
-                    done
-                  done < <(echo "$CRATE_RULES_JSON" | jq -c '.[]?')
-
-                  # 依赖感知：crate_path_rules（crate + 路径 联合规则）
-                  while IFS= read -r f; do
-                    [ -z "$f" ] && continue
-                    file_crate=$(echo "$FILE_TO_CRATE_JSON" | jq -r --arg f "$f" '.[$f] // empty')
-                    [ -z "$file_crate" ] && continue
-                    while IFS= read -r rule; do
-                      [ -z "$rule" ] && continue
-                      crates_json=$(echo "$rule" | jq -c '.crates // []')
-                      direct_only=$(echo "$rule" | jq -r '.direct_only // false')
-                      targets_json=$(echo "$rule" | jq -c '.targets // []')
-                      path_patterns_json=$(echo "$rule" | jq -c '.path_patterns // []')
-                      check_json="$AFFECTED_CRATES_JSON"
-                      [ "$direct_only" = "true" ] && check_json="$CHANGED_CRATES_JSON"
-                      if ! echo "$check_json" | jq -e --arg c "$file_crate" 'index($c) != null' >/dev/null 2>&1; then
-                        continue
-                      fi
-                      if ! echo "$crates_json" | jq -e --arg c "$file_crate" 'index($c) != null' >/dev/null 2>&1; then
-                        continue
-                      fi
-                      matched_path=false
-                      for p in $(echo "$path_patterns_json" | jq -r '.[]'); do
-                        if [[ "$f" == $p ]]; then
-                          matched_path=true
-                          break
-                        fi
-                      done
-                      if [ "$matched_path" = "true" ]; then
-                        for t in $(echo "$targets_json" | jq -r '.[]'); do
-                          SELECTED["$t"]=1
-                        done
-                        break
-                      fi
-                    done < <(echo "$CRATE_PATH_RULES_JSON" | jq -c '.[]?')
-                  done <<< "$CHANGED_FILES"
-
-                  if [ "$HAS_CODE_CHANGE" = false ]; then
-                    TARGETS_JSON='[]'
-                    AUTO_REASON="non_code_only_skip"
-                  elif [ "$NEEDS_ALL" = true ]; then
-                    TARGETS_JSON='["all"]'
-                    AUTO_REASON="run_all_rule"
-                  else
-                    ORDERED_TARGETS=()
-                    for t in "${TARGET_ORDER[@]}"; do
-                      if [ -n "${SELECTED[$t]:-}" ]; then
-                        ORDERED_TARGETS+=("$t")
-                      fi
-                    done
-
-                    if [ ${#ORDERED_TARGETS[@]} -eq 0 ]; then
-                      TARGETS_JSON='["all"]'
-                      AUTO_REASON="no_match_fallback_all"
-                    else
-                      TARGETS_JSON=$(printf '%s\n' "${ORDERED_TARGETS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
-                      AUTO_REASON="rule_selected"
-                    fi
-                  fi
-                  fi
-                fi
-              fi
-            fi
-          else
-            TARGETS_JSON=$(parse_targets_input "$INPUT")
-          fi
-
-          # Defensive fallback: ensure TARGETS_JSON is always valid JSON array.
-          if ! echo "$TARGETS_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
-            TARGETS_JSON='[]'
-          fi
-
-          AXVISOR_ALL='[
-            {"type":"qemu","arch":"aarch64","vmconfigs":"configs/vms/arceos-aarch64-qemu-smp1.toml","vmconfigs_name":"ArceOS","vmimage_name":"qemu_aarch64_arceos","target_key":"axvisor-qemu-aarch64-arceos"},
-            {"type":"qemu","arch":"aarch64","vmconfigs":"configs/vms/linux-aarch64-qemu-smp1.toml","vmconfigs_name":"Linux","vmimage_name":"qemu_aarch64_linux","target_key":"axvisor-qemu-aarch64-linux"},
-            {"type":"qemu","arch":"x86_64","vmconfigs":"configs/vms/nimbos-x86_64-qemu-smp1.toml","vmconfigs_name":"NimbOS","vmimage_name":"qemu_x86_64_nimbos","target_key":"axvisor-qemu-x86_64-nimbos"},
-            {"type":"board","board":"phytiumpi","vmconfigs":"configs/vms/arceos-aarch64-e2000-smp1.toml","vmconfigs_name":"ArceOS","target_key":"axvisor-board-phytiumpi-arceos"},
-            {"type":"board","board":"phytiumpi","vmconfigs":"configs/vms/linux-aarch64-e2000-smp1.toml","vmconfigs_name":"Linux","target_key":"axvisor-board-phytiumpi-linux"},
-            {"type":"board","board":"roc-rk3568-pc","vmconfigs":"configs/vms/arceos-aarch64-rk3568-smp1.toml","vmconfigs_name":"ArceOS","target_key":"axvisor-board-roc-rk3568-pc-arceos"},
-            {"type":"board","board":"roc-rk3568-pc","vmconfigs":"configs/vms/linux-aarch64-rk3568-smp1.toml","vmconfigs_name":"Linux","target_key":"axvisor-board-roc-rk3568-pc-linux"}
-          ]'
-
-          STARRY_ALL='[
-            {"arch":"riscv64","target_key":"starry-riscv64"},
-            {"arch":"loongarch64","target_key":"starry-loongarch64"},
-            {"arch":"aarch64","target_key":"starry-aarch64"},
-            {"arch":"x86_64","target_key":"starry-x86_64"}
-          ]'
-
-          IS_AUTO=false
-          if [ "$INPUT" = "auto" ] || [ "$INPUT" = "__auto__" ]; then
-            IS_AUTO=true
-          fi
-
-          # Normalize runs_on input to a valid JSON string array.
-          RUNS_ON_JSON='${{ inputs.runs_on }}'
-          if ! echo "$RUNS_ON_JSON" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
-            RUNS_ON_JSON='["self-hosted","Linux","X64"]'
-          fi
-
-          AXVISOR_MATRIX=$(echo "$AXVISOR_ALL" | jq -c --argjson targets "$TARGETS_JSON" --arg runs_on_json "$RUNS_ON_JSON" '
-            if (($targets | index("all")) != null) or (($targets | index("axvisor")) != null) then
-              map(
-                del(.target_key)
-                | . + {
-                    runner_labels_json: (
-                      if .type == "board" then
-                        ("[\"self-hosted\",\"Linux\",\"X64\",\"" + .board + "\"]")
-                      else
-                        $runs_on_json
-                      end
-                    )
-                  }
-              )
-            else
-              map(select(. as $item | ($targets | index($item.target_key)) != null))
-              | map(
-                  del(.target_key)
-                  | . + {
-                      runner_labels_json: (
-                        if .type == "board" then
-                          ("[\"self-hosted\",\"Linux\",\"X64\",\"" + .board + "\"]")
-                        else
-                          $runs_on_json
-                        end
-                      )
-                    }
-                )
-            end
-          ')
-
-          STARRY_MATRIX=$(echo "$STARRY_ALL" | jq -c --argjson targets "$TARGETS_JSON" '
-            if (($targets | index("all")) != null) or (($targets | index("starry")) != null) then
-              map(del(.target_key))
-            else
-              map(select(. as $item | ($targets | index($item.target_key)) != null)) | map(del(.target_key))
-            end
-          ')
-
-          # Backward-compatibility: manual non-auto empty targets should still mean "all".
-          if [ "$IS_AUTO" != "true" ] && [ "$(echo "$TARGETS_JSON" | jq 'length')" -eq 0 ]; then
-            AXVISOR_MATRIX=$(echo "$AXVISOR_ALL" | jq -c --arg runs_on_json "$RUNS_ON_JSON" '
-              map(
-                del(.target_key)
-                | . + {
-                    runner_labels_json: (
-                      if .type == "board" then
-                        ("[\"self-hosted\",\"Linux\",\"X64\",\"" + .board + "\"]")
-                      else
-                        $runs_on_json
-                      end
-                    )
-                  }
-              )
-            ')
-            STARRY_MATRIX=$(echo "$STARRY_ALL" | jq -c 'map(del(.target_key))')
-          fi
-
-          SKIP_ALL=false
-          if [ "$AXVISOR_MATRIX" = "[]" ] && [ "$STARRY_MATRIX" = "[]" ]; then
-            SKIP_ALL=true
-          fi
-
-          SELECTION_MODE="subset"
-          if [ "$INPUT" = "auto" ] || [ "$INPUT" = "__auto__" ]; then
-            if [ "$SKIP_ALL" = "true" ]; then
-              SELECTION_MODE="auto-skip"
-            elif [ "$(echo "$TARGETS_JSON" | jq 'index("all") != null')" = "true" ]; then
-              SELECTION_MODE="auto-all"
-            else
-              SELECTION_MODE="auto-subset"
-            fi
-          elif [ "$(echo "$TARGETS_JSON" | jq 'length')" -eq 0 ] || [ "$(echo "$TARGETS_JSON" | jq 'index("all") != null')" = "true" ]; then
-            SELECTION_MODE="all"
-          elif [ "$SKIP_ALL" = "true" ]; then
-            SELECTION_MODE="skip"
-          fi
-
-          AXVISOR_COUNT=$(echo "$AXVISOR_MATRIX" | jq 'length')
-          STARRY_COUNT=$(echo "$STARRY_MATRIX" | jq 'length')
-
-          echo "axvisor_matrix=$AXVISOR_MATRIX" >> "$GITHUB_OUTPUT"
-          echo "starry_matrix=$STARRY_MATRIX" >> "$GITHUB_OUTPUT"
-          echo "skip_all=$SKIP_ALL" >> "$GITHUB_OUTPUT"
-          echo "selection_mode=$SELECTION_MODE" >> "$GITHUB_OUTPUT"
-          echo "requested_targets=$INPUT" >> "$GITHUB_OUTPUT"
-          echo "resolved_targets=$TARGETS_JSON" >> "$GITHUB_OUTPUT"
-          echo "auto_reason=$AUTO_REASON" >> "$GITHUB_OUTPUT"
-          echo "axvisor_count=$AXVISOR_COUNT" >> "$GITHUB_OUTPUT"
-          echo "starry_count=$STARRY_COUNT" >> "$GITHUB_OUTPUT"
-
-          echo "Input test_targets: $INPUT"
-          echo "Auto detect reason: $AUTO_REASON"
-          echo "Base ref: $BASE_REF"
-          echo "Targets json: $TARGETS_JSON"
-          echo "AXVISOR_MATRIX: $AXVISOR_MATRIX"
-          echo "STARRY_MATRIX: $STARRY_MATRIX"
-
-      - name: Write detect summary
-        run: |
-          {
-            echo "## Dependency-aware Selection"
-            echo ""
-            echo "| Item | Value |"
-            echo "|---|---|"
-            echo "| requested_targets | \`${{ steps.matrix.outputs.requested_targets }}\` |"
-            echo "| resolved_targets | \`${{ steps.matrix.outputs.resolved_targets }}\` |"
-            echo "| auto_reason | \`${{ steps.matrix.outputs.auto_reason }}\` |"
-            echo "| selection_mode | \`${{ steps.matrix.outputs.selection_mode }}\` |"
-            echo "| skip_all | \`${{ steps.matrix.outputs.skip_all }}\` |"
-            echo "| axvisor_count | \`${{ steps.matrix.outputs.axvisor_count }}\` |"
-            echo "| starry_count | \`${{ steps.matrix.outputs.starry_count }}\` |"
-            echo ""
-            echo "### Axvisor Matrix"
-            echo "\`\`\`json"
-            echo '${{ steps.matrix.outputs.axvisor_matrix }}' | jq .
-            echo "\`\`\`"
-            echo ""
-            echo "### Starry Matrix"
-            echo "\`\`\`json"
-            echo '${{ steps.matrix.outputs.starry_matrix }}' | jq .
-            echo "\`\`\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ========== Axvisor Tests ==========
-  axvisor:
-    needs: detect
-    if: needs.detect.outputs.skip_all != 'true' && needs.detect.outputs.axvisor_matrix != '[]'
-    name: "Axvisor: ${{ matrix.type }} - ${{ matrix.vmconfigs_name }}"
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.detect.outputs.axvisor_matrix) }}
-    # Board targets must pin to board-labeled runners; qemu targets follow inputs.runs_on.
-    runs-on: ${{ fromJson(matrix.runner_labels_json) }}
-
-    steps:
-      - name: Clean up workspace
-        run: |
-          [ -d .git ] && git submodule deinit -f . || true
-          [ -d .git/modules ] && rm -rf .git/modules || true
-          [ -d .git ] && git clean -ffdx || true
-          # Remove leftover .cargo/ from previous runs that checked out
-          # directly to workspace root (e.g. old test-qemu.yml / test-board.yml).
-          # Without this, cargo walks up from ./axvisor/ and finds a second
-          # .cargo/config.toml here, doubling all rustflags → linker failures.
-          rm -rf .cargo
-
-      - name: Harden git network settings
-        run: |
-          git config --global http.version HTTP/1.1
-          git config --global http.lowSpeedLimit 1000
-          git config --global http.lowSpeedTime 60
-          git config --global http.postBuffer 104857600
-
       - name: Checkout component
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          path: component
+        uses: actions/checkout@v5
 
-      - name: Checkout axvisor
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          repository: ${{ inputs.axvisor_repo }}
-          ref: ${{ inputs.axvisor_ref }}
-          path: axvisor
-          submodules: recursive
-
-      - name: Install Rust toolchain for axvisor build
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly
-          components: rust-src, llvm-tools
-          targets: x86_64-unknown-none, aarch64-unknown-none-softfloat
-
-      - name: Ensure rust-objcopy is available
+      - name: Clone test framework
         run: |
-          if command -v rust-objcopy >/dev/null 2>&1; then
-            rust-objcopy --version
-          else
-            cargo install cargo-binutils
-            rust-objcopy --version
-          fi
+          git clone --depth 1 --branch ndev https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
-      - name: Setup QEMU for axvisor tests
-        if: matrix.type == 'qemu'
-        uses: arceos-org/setup-qemu@v1
-        with:
-          version: 10.1.0
-          arch_list: ${{ matrix.arch }}
-
-      - name: Get component crate name
-        id: component
-        working-directory: component
+      - name: Detect test targets
+        id: detect
         run: |
-          if [ -n "${{ inputs.crate_name }}" ]; then
-            CRATE_NAME="${{ inputs.crate_name }}"
-          else
-            CRATE_NAME=$(cargo tree 2>/dev/null | head -1 | cut -d' ' -f1 || basename "$(pwd)")
-          fi
-          echo "crate_name=$CRATE_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve component patch path
-        id: component_path
-        run: |
-          CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          PATCH_PATH="$(pwd)/component"
-
-          if [ -f component/Cargo.toml ]; then
-            MANIFEST_PATH=$(cargo metadata --manifest-path component/Cargo.toml --format-version 1 --no-deps \
-              | jq -r --arg name "$CRATE_NAME" '.packages[] | select(.name == $name) | .manifest_path' \
-              | sed -n '1p')
-            if [ -n "$MANIFEST_PATH" ] && [ "$MANIFEST_PATH" != "null" ]; then
-              PATCH_PATH="$(dirname "$MANIFEST_PATH")"
-            fi
-          fi
-
-          echo "patch_path=$PATCH_PATH" >> "$GITHUB_OUTPUT"
-          echo "Resolved patch path: $PATCH_PATH"
-
-      - name: Apply patch to Cargo.toml
-        working-directory: axvisor
-        run: |
-          CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          PATCH_PATH="${{ steps.component_path.outputs.patch_path }}"
-          PATCH_LINE="$CRATE_NAME = { path = \"$PATCH_PATH\" }"
-          if grep -q '^\[patch.crates-io\]' Cargo.toml; then
-            sed -i "/^\[patch.crates-io\]/a $PATCH_LINE" Cargo.toml
-          else
-            echo "" >> Cargo.toml
-            echo "[patch.crates-io]" >> Cargo.toml
-            echo "$PATCH_LINE" >> Cargo.toml
-          fi
-          echo "Applied patch:"
-          tail -10 Cargo.toml
-
-      - name: Install host dependencies for ostool
-        run: |
-          set -e
-          if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libudev; then
-            echo "libudev is already available"
-            exit 0
-          fi
-
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y pkg-config libudev-dev
-          elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y pkgconf-pkg-config systemd-devel
-          elif command -v yum >/dev/null 2>&1; then
-            sudo yum install -y pkgconfig systemd-devel
-          elif command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache pkgconf eudev-dev
-          else
-            echo "No supported package manager found to install libudev development headers."
-            exit 1
-          fi
-
-          pkg-config --exists libudev
-
-      - name: Install ostool
-        run: |
-          if command -v ostool >/dev/null 2>&1; then
-            ostool --version
-          else
-            cargo +stable install ostool --version ^0.8
-          fi
-
-      - name: Download images and patch vm configs (QEMU only)
-        if: matrix.type == 'qemu'
-        working-directory: axvisor
-        run: |
-          IMAGE_DIR="/tmp/.axvisor-images"
-          IFS=',' read -ra CONFIGS <<< "${{ matrix.vmconfigs }}"
-          IFS=',' read -ra IMAGES <<< "${{ matrix.vmimage_name }}"
-          for i in "${!CONFIGS[@]}"; do
-            img="${IMAGES[$i]}"
-            img=$(echo "$img" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-            config="${CONFIGS[$i]}"
-            config=$(echo "$config" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-            cargo xtask image download "$img"
-            img_name="qemu-${{ matrix.arch }}"
-            image_location=$(sed -n 's/^image_location[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$config")
-
-            case "$image_location" in
-            "fs")
-              echo "Filesystem storage mode - no config update needed"
-              ;;
-            "memory")
-              sed -i 's|^kernel_path[[:space:]]*=.*|kernel_path = "'"${IMAGE_DIR}"'/'"$img"'/'"$img_name"'"|' "$config"
-              echo "Memory storage mode - updating kernel_path"
-              ;;
-            *)
-              echo "Unknown image_location: $image_location"
-              exit 1
-              ;;
-            esac
-
-            ROOTFS_IMG_PATH="${IMAGE_DIR}/$img/rootfs.img"
-            if [ -f "${ROOTFS_IMG_PATH}" ]; then
-              sed -i 's|file=${workspaceFolder}/tmp/rootfs.img|file='"${ROOTFS_IMG_PATH}"'|' ".github/workflows/qemu-${{ matrix.arch }}.toml"
+          # 获取测试目标列表
+          TARGETS=$(./axci/tests.sh --list-auto)
+          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          
+          # 生成 matrix 配置，包含 target 和对应的 runner
+          MATRIX="["
+          first=true
+          
+          # 解析每个目标并分配对应的 runner
+          for target in $(echo "$TARGETS" | jq -r '.[]'); do
+            if [ "$first" = true ]; then
+              first=false
             else
-              sed -i '/-device/,/virtio-blk-device,drive=disk0/d' ".github/workflows/qemu-${{ matrix.arch }}.toml"
-              sed -i '/-drive/,/id=disk0,if=none,format=raw,file=${workspaceFolder}\/tmp\/rootfs.img/d' ".github/workflows/qemu-${{ matrix.arch }}.toml"
-              sed -i 's/root=\/dev\/vda rw //' ".github/workflows/qemu-${{ matrix.arch }}.toml"
+              MATRIX+=","
             fi
+            
+          # 根据目标类型确定 runner (self-hosted runner 需要数组格式)
+            if [[ "$target" == *"board-phytiumpi"* ]]; then
+              runner='["self-hosted", "phytiumpi"]'
+              board='"phytiumpi"'
+            elif [[ "$target" == *"board-roc-rk3568-pc"* ]]; then
+              runner='["self-hosted", "roc-rk3568-pc"]'
+              board='"roc-rk3568-pc"'
+            else
+              # QEMU 测试和其他测试使用 self-hosted
+              runner='"self-hosted"'
+              board='null'
+            fi
+            
+            MATRIX+="{\"target\":\"$target\",\"runner\":$runner,\"board\":$board}"
           done
-
-      - name: Check QEMU runtime prerequisites
-        id: qemu_guard
-        if: matrix.type == 'qemu'
-        run: |
-          echo "run_qemu=true" >> "$GITHUB_OUTPUT"
-          if [ "${{ matrix.arch }}" = "x86_64" ] && [ "${{ matrix.vmconfigs_name }}" = "NimbOS" ]; then
-            if [ ! -e /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-              echo "run_qemu=false" >> "$GITHUB_OUTPUT"
-              {
-                echo "### Axvisor QEMU skipped"
-                echo ""
-                echo "- target: \`x86_64 / NimbOS\`"
-                echo "- reason: KVM is unavailable on this hosted runner"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-      - name: Run QEMU tests
-        if: matrix.type == 'qemu' && steps.qemu_guard.outputs.run_qemu == 'true'
-        working-directory: axvisor
-        run: |
-          export RUST_LOG=debug
-          if [ "${{ matrix.vmconfigs_name }}" = "NimbOS" ]; then
-            python3 scripts/ci_run_qemu_nimbos.py -- \
-              cargo xtask qemu \
-              --build-config configs/board/qemu-${{ matrix.arch }}.toml \
-              --qemu-config .github/workflows/qemu-${{ matrix.arch }}.toml \
-              --vmconfigs ${{ matrix.vmconfigs }}
+          MATRIX+="]"
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $MATRIX"
+          
+          if [ "$TARGETS" = "[]" ]; then
+            echo "has-targets=false" >> $GITHUB_OUTPUT
           else
-            cargo xtask qemu \
-              --build-config configs/board/qemu-${{ matrix.arch }}.toml \
-              --qemu-config .github/workflows/qemu-${{ matrix.arch }}.toml \
-              --vmconfigs ${{ matrix.vmconfigs }}
+            echo "has-targets=true" >> $GITHUB_OUTPUT
           fi
+          echo "Detected targets: $TARGETS"
 
-      - name: Check board runtime prerequisites
-        id: board_guard
-        if: matrix.type == 'board'
-        working-directory: axvisor
+  # 单元测试
+  unit-test:
+    name: Unit Test
+    runs-on: self-hosted
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout component
+        uses: actions/checkout@v5
+
+      - name: Clone test framework
         run: |
-          echo "run_board=true" >> "$GITHUB_OUTPUT"
-          config=".github/workflows/uboot.toml"
-          if [ ! -f "$config" ]; then
-            echo "run_board=false" >> "$GITHUB_OUTPUT"
-          elif ! grep -Eq '^[[:space:]]*baud_rate[[:space:]]*=[[:space:]]*[0-9]+' "$config"; then
-            echo "run_board=false" >> "$GITHUB_OUTPUT"
-          fi
-          if [ "$(grep -E '^[[:space:]]*run_board=' "$GITHUB_OUTPUT" | tail -n1 | cut -d= -f2)" = "false" ]; then
-            {
-              echo "### Axvisor board skipped"
-              echo ""
-              echo "- target: \`${{ matrix.board }} / ${{ matrix.vmconfigs_name }}\`"
-              echo "- reason: invalid or unavailable \`uboot.toml\` baud_rate on hosted runner"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
-      - name: Run Board tests
-        if: matrix.type == 'board' && steps.board_guard.outputs.run_board == 'true'
-        working-directory: axvisor
+      - name: Run unit tests
         run: |
-          export RUST_LOG=debug
-          cargo xtask uboot \
-            --build-config configs/board/${{ matrix.board }}.toml \
-            --uboot-config .github/workflows/uboot.toml \
-            --vmconfigs ${{ matrix.vmconfigs }} \
-            --bin-dir /home/runner/tftp
+          ./axci/tests.sh unit
 
-  # ========== Starry Tests ==========
-  starry:
-    needs: detect
-    if: needs.detect.outputs.skip_all != 'true' && needs.detect.outputs.starry_matrix != '[]'
-    name: "Starry: ${{ matrix.arch }}"
+  # 集成测试 (matrix 并行)
+  integration-test:
+    name: Integration Test ${{ matrix.target }}
+    needs: detect-targets
+    if: needs.detect-targets.outputs.has-targets == 'true'
+    runs-on: ${{ matrix.runner }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.detect.outputs.starry_matrix) }}
-    runs-on: ${{ fromJson(inputs.runs_on) }}
-
+        include: ${{ fromJson(needs.detect-targets.outputs.matrix) }}
     steps:
-      - name: Harden git network settings
-        run: |
-          git config --global http.version HTTP/1.1
-          git config --global http.lowSpeedLimit 1000
-          git config --global http.lowSpeedTime 60
-          git config --global http.postBuffer 104857600
-
       - name: Checkout component
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          path: component
+        uses: actions/checkout@v5
 
-      - name: Checkout StarryOS
-        uses: actions/checkout@v4
-        timeout-minutes: 10
-        with:
-          repository: Starry-OS/StarryOS
-          ref: main
-          path: starry
-          submodules: recursive
-
-      - name: Get component crate name
-        id: component
-        working-directory: component
+      - name: Clone test framework
         run: |
-          if [ -n "${{ inputs.crate_name }}" ]; then
-            CRATE_NAME="${{ inputs.crate_name }}"
-          else
-            CRATE_NAME=$(cargo tree 2>/dev/null | head -1 | cut -d' ' -f1 || basename "$(pwd)")
-          fi
-          echo "crate_name=$CRATE_NAME" >> "$GITHUB_OUTPUT"
+          git clone --depth 1 https://github.com/arceos-hypervisor/axci.git axci
+          chmod +x axci/tests.sh
 
-      - name: Resolve component patch path
-        id: component_path
+      - name: Run test for ${{ matrix.target }}
         run: |
-          CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          PATCH_PATH="$(pwd)/component"
+          ./axci/tests.sh integration -s ${{ matrix.target }} --fs --print -v
 
-          if [ -f component/Cargo.toml ]; then
-            MANIFEST_PATH=$(cargo metadata --manifest-path component/Cargo.toml --format-version 1 --no-deps \
-              | jq -r --arg name "$CRATE_NAME" '.packages[] | select(.name == $name) | .manifest_path' \
-              | sed -n '1p')
-            if [ -n "$MANIFEST_PATH" ] && [ "$MANIFEST_PATH" != "null" ]; then
-              PATCH_PATH="$(dirname "$MANIFEST_PATH")"
-            fi
-          fi
-
-          echo "patch_path=$PATCH_PATH" >> "$GITHUB_OUTPUT"
-          echo "Resolved patch path: $PATCH_PATH"
-
-      - name: Apply patch to Cargo.toml
-        working-directory: starry
+  # 无测试目标时的提示
+  no-tests:
+    name: No Tests Available
+    needs: detect-targets
+    if: needs.detect-targets.outputs.has-targets == 'false'
+    runs-on: self-hosted
+    steps:
+      - name: No tests to run
         run: |
-          CRATE_NAME="${{ steps.component.outputs.crate_name }}"
-          PATCH_PATH="${{ steps.component_path.outputs.patch_path }}"
-          PATCH_LINE="$CRATE_NAME = { path = \"$PATCH_PATH\" }"
-          if grep -q '^\[patch.crates-io\]' Cargo.toml; then
-            sed -i "/^\[patch.crates-io\]/a $PATCH_LINE" Cargo.toml
-          else
-            echo "" >> Cargo.toml
-            echo "[patch.crates-io]" >> Cargo.toml
-            echo "$PATCH_LINE" >> Cargo.toml
-          fi
-          echo "Applied patch:"
-          tail -10 Cargo.toml
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: test
-          cache-targets: false
-
-      - uses: arceos-org/setup-musl@v1
-        with:
-          arch: ${{ matrix.arch }}
-
-      - name: Build
-        working-directory: starry
-        run: make ARCH=${{ matrix.arch }} build
-
-      - name: Setup QEMU
-        uses: arceos-org/setup-qemu@v1
-        with:
-          version: 10.1.0
-          arch_list: ${{ matrix.arch }}
-
-      - name: Prepare rootfs
-        working-directory: starry
-        run: make ARCH=${{ matrix.arch }} img
-
-      - name: Test
-        working-directory: starry
-        run: scripts/ci-test.py ${{ matrix.arch }}
+          echo "No test targets detected for this component."
+          echo "Check rust-toolchain.toml or component configuration."
