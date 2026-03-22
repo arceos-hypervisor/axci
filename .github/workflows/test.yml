@@ -742,10 +742,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Demo delay for serialization visibility
+      # 在 checkout、依赖、board_guard 之后延时，便于先看到 Set up job / 前面步骤的日志，再演示同板卡串行
+      - name: Demo delay (serialization visibility)
         if: matrix.type == 'board' && steps.board_guard.outputs.run_board == 'true'
         run: |
-          echo "Holding board lock for 90s to demonstrate serial execution (同板卡串行)..."
+          echo "Holding board for 90s to demonstrate serial execution (同板卡串行)..."
           sleep 90
 
       - name: Run Board tests
