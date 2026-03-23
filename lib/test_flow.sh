@@ -696,9 +696,9 @@ run_all_tests() {
         for target in "${target_array[@]}"; do
             status="$(collect_target_status "$target")"
             case "$status" in
-                passed) ((passed++)) ;;
-                skipped) ((skipped++)) ;;
-                *) ((failed++)) ;;
+                passed) passed=$((passed + 1)) ;;
+                skipped) skipped=$((skipped + 1)) ;;
+                *) failed=$((failed + 1)) ;;
             esac
         done
     else
@@ -709,9 +709,9 @@ run_all_tests() {
             set -e
             status="$(collect_target_status "$target")"
             case "$status" in
-                passed) ((passed++)) ;;
-                skipped) ((skipped++)) ;;
-                *) ((failed++)) ;;
+                passed) passed=$((passed + 1)) ;;
+                skipped) skipped=$((skipped + 1)) ;;
+                *) failed=$((failed + 1)) ;;
             esac
         done
     fi
