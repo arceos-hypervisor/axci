@@ -2,11 +2,30 @@
 #
 # board.sh - 开发板测试专用：电源控制、资源清理、defconfig、U-Boot 配置
 #
+# 此文件负责真实开发板测试的准备工作:
+#   1. 电源控制 (通过 mbpoll 控制智能 PDU)
+#   2. 测试资源清理 (串口释放、进程清理)
+#   3. 镜像配置 (TFTP 目录、kernel_path)
+#   4. defconfig 和 .build.toml 配置
+#   5. U-Boot 串口配置 (.uboot.toml)
+#
+# 使用方式: source "$SCRIPT_DIR/lib/board.sh"
+#
 
 SCRIPT_DIR_BOARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_BOARD/lib/common.sh"
 
-# 控制开发板电源（通过 mbpoll）
+# =============================================================================
+# 电源控制函数
+# =============================================================================
+
+# 控制开发板电源（通过 mbpoll 智能开关）
+# 参数:
+#   $1 - board_name: 开发板名称 (phytiumpi, roc-rk3568-pc)
+#   $2 - action: 操作类型 ("on" 或 "off")
+#
+# 使用 mbpoll 通过 Modbus RTU 协议控制智能 PDU
+# 不同开发板使用不同的串口设备
 control_board_power() {
     local board_name=$1
     local action=$2  # "on" 或 "off"
@@ -49,7 +68,19 @@ control_board_power() {
     fi
 }
 
+# =============================================================================
+# 资源清理函数
+# =============================================================================
+
 # 清理开发板测试资源
+# 参数:
+#   $1 - board_name: 开发板名称
+#   $2 - test_dir: 测试目录路径
+#
+# 清理内容:
+#   1. 关闭开发板电源
+#   2. 杀掉残留的 cargo-osrun 进程
+#   3. 释放串口设备
 cleanup_board_resources() {
     local board_name=$1
     local test_dir=$2
@@ -69,7 +100,7 @@ cleanup_board_resources() {
     fi
 
     # 3. 释放串口
-    local uboot_toml_file="$COMPONENT_DIR/.uboot.toml"
+    local uboot_toml_file="$CTX_COMPONENT_DIR/.uboot.toml"
     if [ -f "$uboot_toml_file" ]; then
         local serial_port=$(jq -r ".boards[\"$board_name\"].serial // empty" "$uboot_toml_file" 2>/dev/null)
         if [ -n "$serial_port" ] && [ -e "$serial_port" ]; then
@@ -88,8 +119,23 @@ cleanup_board_resources() {
     log "  资源清理完成"
 }
 
+# =============================================================================
+# 镜像配置函数
+# =============================================================================
+
 # 设置 Board 测试镜像（下载、配置 kernel_path 为 memory 模式）
-# 参数: target_config, target_name, test_dir, log_file, status_file
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
+#   $2 - target_name: 测试目标名称
+#   $3 - test_dir: 测试目录路径
+#   $4 - log_file: 日志文件路径
+#   $5 - status_file: 状态文件路径
+# 返回: 0 成功, 1 失败
+#
+# 处理流程:
+#   1. 创建 TFTP 目录 (用于存放内核镜像)
+#   2. 下载测试镜像
+#   3. 修改 VM 配置文件中的 image_location 和 kernel_path
 setup_board_images() {
     local target_config=$1
     local target_name=$2
@@ -131,7 +177,7 @@ setup_board_images() {
         config=$(echo "$config" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         # 更新配置文件（仅在非 --fs 模式下）
-        if [ "$USE_FS_MODE" == true ]; then
+        if [ "$OPT_USE_FS_MODE" == true ]; then
             log "  --fs 模式: 跳过配置文件修改"
         elif [ -f "$test_dir/$config" ]; then
             cd "$test_dir"
@@ -168,12 +214,27 @@ setup_board_images() {
             log_warn "  配置文件不存在: $config"
         fi
     done
-    cd "$COMPONENT_DIR"
+    cd "$CTX_COMPONENT_DIR"
     return 0
 }
 
+# =============================================================================
+# Defconfig 和构建配置函数
+# =============================================================================
+
 # 设置 Board defconfig 和 .build.toml
-# 参数: target_config, target_name, test_dir, log_file, status_file
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
+#   $2 - target_name: 测试目标名称
+#   $3 - test_dir: 测试目录路径
+#   $4 - log_file: 日志文件路径
+#   $5 - status_file: 状态文件路径
+# 返回: 0 成功, 1 失败
+#
+# 处理流程:
+#   1. 执行 cargo xtask defconfig {board_name}
+#   2. 修改 .build.toml 中的 features 和 vm_configs
+#   3. --fs 模式下仅修改 vm_configs
 setup_board_defconfig() {
     local target_config=$1
     local target_name=$2
@@ -205,7 +266,7 @@ setup_board_defconfig() {
     else
         log_error "  Defconfig 失败"
         echo "failed" > "$status_file"
-        cd "$COMPONENT_DIR"
+        cd "$CTX_COMPONENT_DIR"
         return 1
     fi
 
@@ -214,7 +275,7 @@ setup_board_defconfig() {
     local build_toml=".build.toml"
 
     if [ -f "$build_toml" ]; then
-        if [ "$USE_FS_MODE" == true ]; then
+        if [ "$OPT_USE_FS_MODE" == true ]; then
             local fs_vm_configs=""
             case "$target_name" in
                 axvisor-board-phytiumpi-arceos)
@@ -263,13 +324,29 @@ setup_board_defconfig() {
     else
         log_error "  未找到 .build.toml 文件"
         echo "failed" > "$status_file"
-        cd "$COMPONENT_DIR"
+        cd "$CTX_COMPONENT_DIR"
         return 1
     fi
 }
 
+# =============================================================================
+# U-Boot 配置函数
+# =============================================================================
+
 # 设置 U-Boot 配置（.uboot.toml）
-# 参数: target_config, test_dir
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
+#   $2 - test_dir: 测试目录路径
+#
+# 生成 .uboot.toml 文件，包含:
+#   - serial: 串口设备路径
+#   - baud_rate: 波特率
+#   - dtb_file: DTB 文件路径
+#
+# 配置来源优先级:
+#   1. $COMPONENT_DIR/.uboot.json 中的 board 配置
+#   2. 框架自带的 json/uboot.json
+#   3. 交互式输入
 setup_uboot_config() {
     local target_config=$1
     local test_dir=$2
@@ -278,7 +355,7 @@ setup_uboot_config() {
 
     log "  检查 U-Boot 配置..."
     local uboot_config_file=".uboot.toml"
-    local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+    local uboot_json_file="$CTX_COMPONENT_DIR/.uboot.json"
 
     # 回退: 框架自带的 uboot.json
     if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
@@ -362,8 +439,13 @@ EOF
     fi
 }
 
+# =============================================================================
+# 命令准备函数
+# =============================================================================
+
 # 准备 Board 测试命令
-# 参数: target_config
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
 # 输出: 完整的测试命令到 stdout
 prepare_board_command() {
     local target_config=$1

@@ -2,13 +2,26 @@
 #
 # config.sh - 配置加载、目标检测、依赖检查
 #
+# 此文件负责:
+#   1. 从 rust-toolchain.toml 自动检测支持的架构
+#   2. 检查运行所需的依赖工具
+#   3. 加载测试配置文件 (.github/config.json 或 .test-config.json)
+#   4. 设置输出目录结构
+#
+# 使用方式: source "$SCRIPT_DIR/lib/config.sh"
+#
 
 SCRIPT_DIR_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_CONFIG/lib/common.sh"
 
+# =============================================================================
+# 架构检测函数
+# =============================================================================
+
 # 从 rust-toolchain.toml 中提取 targets 并映射到架构
+# 返回: 空格分隔的架构列表 (如 "aarch64 x86_64")，或 "all"
 detect_targets_from_toolchain() {
-    local toolchain_file="$COMPONENT_DIR/rust-toolchain.toml"
+    local toolchain_file="$CTX_COMPONENT_DIR/rust-toolchain.toml"
     local detected_archs=()
 
     if [ ! -f "$toolchain_file" ]; then
@@ -67,7 +80,14 @@ detect_targets_from_toolchain() {
     echo "${detected_archs[*]}"
 }
 
-# 检查依赖
+# =============================================================================
+# 依赖检查函数
+# =============================================================================
+
+# 检查运行所需的依赖工具
+# 必需: jq, git, cargo
+# 可选: cargo-clone (如未安装会自动安装)
+# 如缺少必需依赖则退出脚本
 check_dependencies() {
     log "检查依赖..."
 
@@ -101,8 +121,14 @@ check_dependencies() {
     log_success "依赖检查通过"
 }
 
-# 默认测试目标
-DEFAULT_TARGETS='[
+# =============================================================================
+# 默认测试目标配置
+# 包含 QEMU 模拟测试和真实开发板测试的完整配置
+# =============================================================================
+
+# 默认测试目标 (JSON 格式)
+# 每个目标包含: name, type(qemu/board), arch, repo, build, test, patch 等字段
+CONST_DEFAULT_TEST_TARGETS='[
   {
     "name": "axvisor-qemu-aarch64-arceos",
     "type": "qemu",
@@ -254,62 +280,78 @@ DEFAULT_TARGETS='[
   }
 ]'
 
-# 加载配置
+# =============================================================================
+# 配置加载函数
+# =============================================================================
+
+# 加载测试配置
+# 1. 确定组件目录 (CTX_COMPONENT_DIR)
+# 2. 查找配置文件 (优先级: --config > .github/config.json > .test-config.json)
+# 3. 从 Cargo.toml 提取 crate 名称
+# 4. 如无配置文件则使用 CONST_DEFAULT_TEST_TARGETS
+# 设置共享上下文: CTX_CONFIG, CTX_COMPONENT_NAME, CTX_COMPONENT_CRATE
 load_config() {
     # 确定组件目录
-    if [ -z "$COMPONENT_DIR" ]; then
-        COMPONENT_DIR="$(pwd)"
+    if [ -z "$CTX_COMPONENT_DIR" ]; then
+        CTX_COMPONENT_DIR="$(pwd)"
     fi
 
     # 尝试查找配置文件（可选）
-    if [ -z "$CONFIG_FILE" ]; then
-        if [ -f "$COMPONENT_DIR/.github/config.json" ]; then
-            CONFIG_FILE="$COMPONENT_DIR/.github/config.json"
-        elif [ -f "$COMPONENT_DIR/.test-config.json" ]; then
-            CONFIG_FILE="$COMPONENT_DIR/.test-config.json"
+    if [ -z "$CTX_CONFIG_FILE" ]; then
+        if [ -f "$CTX_COMPONENT_DIR/.github/config.json" ]; then
+            CTX_CONFIG_FILE="$CTX_COMPONENT_DIR/.github/config.json"
+        elif [ -f "$CTX_COMPONENT_DIR/.test-config.json" ]; then
+            CTX_CONFIG_FILE="$CTX_COMPONENT_DIR/.test-config.json"
         fi
     fi
 
     # 检测 crate 名称（从 Cargo.toml）
-    if [ -f "$COMPONENT_DIR/Cargo.toml" ]; then
-        COMPONENT_CRATE=$(grep '^name = ' "$COMPONENT_DIR/Cargo.toml" | head -1 | sed 's/name = "\(.*\)"/\1/' || basename "$COMPONENT_DIR")
+    if [ -f "$CTX_COMPONENT_DIR/Cargo.toml" ]; then
+        CTX_COMPONENT_CRATE=$(grep '^name = ' "$CTX_COMPONENT_DIR/Cargo.toml" | head -1 | sed 's/name = "\(.*\)"/\1/' || basename "$CTX_COMPONENT_DIR")
     else
-        COMPONENT_CRATE=$(basename "$COMPONENT_DIR")
+        CTX_COMPONENT_CRATE=$(basename "$CTX_COMPONENT_DIR")
     fi
-    COMPONENT_NAME="$COMPONENT_CRATE"
+    CTX_COMPONENT_NAME="$CTX_COMPONENT_CRATE"
 
     # 如果有配置文件，则使用配置文件
-    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-        log "加载配置: $CONFIG_FILE"
-        CONFIG=$(cat "$CONFIG_FILE")
+    if [ -n "$CTX_CONFIG_FILE" ] && [ -f "$CTX_CONFIG_FILE" ]; then
+        log "加载配置: $CTX_CONFIG_FILE"
+        CTX_CONFIG=$(cat "$CTX_CONFIG_FILE")
         # 从配置文件获取组件信息
-        local config_name=$(echo "$CONFIG" | jq -r '.component.name // empty')
-        local config_crate=$(echo "$CONFIG" | jq -r '.component.crate_name // empty')
-        [ -n "$config_name" ] && COMPONENT_NAME="$config_name"
-        [ -n "$config_crate" ] && COMPONENT_CRATE="$config_crate"
+        local config_name=$(echo "$CTX_CONFIG" | jq -r '.component.name // empty')
+        local config_crate=$(echo "$CTX_CONFIG" | jq -r '.component.crate_name // empty')
+        [ -n "$config_name" ] && CTX_COMPONENT_NAME="$config_name"
+        [ -n "$config_crate" ] && CTX_COMPONENT_CRATE="$config_crate"
 
         # 检查配置文件是否包含 test_targets
-        local has_targets=$(echo "$CONFIG" | jq 'has("test_targets")')
+        local has_targets=$(echo "$CTX_CONFIG" | jq 'has("test_targets")')
         if [ "$has_targets" != "true" ]; then
             log "配置文件不包含 test_targets，使用默认测试目标"
-            local original_targets=$(echo "$CONFIG" | jq -c '{targets}')
-            CONFIG=$(echo "$original_targets" | jq -c '. + {"component":{"name":"'"$COMPONENT_NAME"'","crate_name":"'"$COMPONENT_CRATE"'"},"test_targets":'"$DEFAULT_TARGETS"'}')
+            local original_targets=$(echo "$CTX_CONFIG" | jq -c '{targets, unit_target_map}')
+            CTX_CONFIG=$(echo "$original_targets" | jq -c '. + {"component":{"name":"'"$CTX_COMPONENT_NAME"'","crate_name":"'"$CTX_COMPONENT_CRATE"'"},"test_targets":'"$CONST_DEFAULT_TEST_TARGETS"'}')
         fi
     else
         log "未找到配置文件，使用默认测试目标"
-        CONFIG="{\"component\":{\"name\":\"$COMPONENT_NAME\",\"crate_name\":\"$COMPONENT_CRATE\"},\"test_targets\":$DEFAULT_TARGETS}"
+        CTX_CONFIG="{\"component\":{\"name\":\"$CTX_COMPONENT_NAME\",\"crate_name\":\"$CTX_COMPONENT_CRATE\"},\"test_targets\":$CONST_DEFAULT_TEST_TARGETS}"
     fi
 
-    log_debug "组件: $COMPONENT_NAME ($COMPONENT_CRATE)"
+    log_debug "组件: $CTX_COMPONENT_NAME ($CTX_COMPONENT_CRATE)"
 }
 
-# 设置输出目录
+# =============================================================================
+# 输出目录设置
+# =============================================================================
+
+# 设置测试结果输出目录
+# 默认: $CTX_COMPONENT_DIR/test-results
+# 创建 logs 子目录用于存储测试日志
+# 设置共享上下文: CTX_OUTPUT_DIR
 setup_output() {
-    if [ -z "$OUTPUT_DIR" ]; then
-        OUTPUT_DIR="$COMPONENT_DIR/test-results"
+    if [ -z "$CTX_OUTPUT_DIR" ]; then
+        CTX_OUTPUT_DIR="$CTX_COMPONENT_DIR/test-results"
     fi
 
-    sudo mkdir -p "$OUTPUT_DIR/logs"
-    sudo chmod -R 777 "$OUTPUT_DIR"
-    log_debug "输出目录: $OUTPUT_DIR"
+    sudo mkdir -p "$CTX_OUTPUT_DIR/logs"
+    sudo chmod -R 777 "$CTX_OUTPUT_DIR"
+    log_debug "输出目录: $CTX_OUTPUT_DIR"
 }

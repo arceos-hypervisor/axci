@@ -2,11 +2,24 @@
 #
 # runner.sh - 命令执行引擎：成功/失败检测、端口清理
 #
+# 此文件负责测试命令的执行和结果检测:
+#   1. 清理占用端口的进程 (端口 5555)
+#   2. 执行测试命令并监控输出
+#   3. 通过预定义的模式检测测试成功/失败
+#   4. 支持开发板测试的串口监控
+#
+# 使用方式: source "$SCRIPT_DIR/lib/runner.sh"
+#
 
 SCRIPT_DIR_RUNNER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_RUNNER/lib/common.sh"
 
+# =============================================================================
+# 端口清理函数
+# =============================================================================
+
 # 检查并关闭占用端口5555的程序
+# QEMU 和开发板测试常使用此端口，需要确保测试前端口可用
 kill_port_5555_processes() {
     local pids=$(sudo lsof -ti :5555 2>/dev/null)
 
@@ -20,7 +33,40 @@ kill_port_5555_processes() {
     fi
 }
 
+# =============================================================================
+# 命令执行和监控函数
+# =============================================================================
+
 # 运行命令并监控输出，检测成功/失败标识符
+# 参数:
+#   $1 - cmd: 要执行的命令
+#   $2 - timeout_minutes: 超时时间（分钟）
+#   $3 - log_file: 日志文件路径
+#   $4 - board_name: (可选) 开发板名称，用于开发板测试
+#   $5 - test_dir: (可选) 测试目录，用于开发板资源清理
+# 返回: 0 成功, 1 失败, 124 超时
+#
+# 成功标识符模式 (匹配任意一个即判定成功):
+#   - "Welcome to"
+#   - "test pass!"
+#   - "All tests passed!"
+#   - "Hello, world!"
+#   - "root@firefly:~#" / "root@phytium-Ubuntu:~#"
+#   - "Set hostname to"
+#   - "starry:~#"
+#   - "Last login:"
+#   - "Booting kernel with command"
+#
+# 错误标识符模式 (匹配任意一个即判定失败):
+#   - "error["
+#   - "FAILED"
+#   - "panicked"
+#   - "segmentation fault"
+#   - "core dumped"
+#
+# 开发板测试特殊逻辑:
+#   - 检测到 "Waiting for board on power or reset" 时自动上电
+#   - U-Boot 阶段完成后继续监控串口输出
 run_with_success_detection() {
     local cmd="$1"
     local timeout_minutes="$2"
@@ -75,7 +121,7 @@ run_with_success_detection() {
             echo "$line" >> "$log_file"
 
             # 根据 --print 选项决定是否输出到标准输出
-            [[ "$PRINT_OUTPUT" == true ]] && echo "$line"
+            [[ "$OPT_PRINT_OUTPUT" == true ]] && echo "$line"
 
             # 检测是否等待开发板上电
             if [[ "$line" == *"Waiting for board on power or reset"* ]]; then
@@ -128,7 +174,7 @@ run_with_success_detection() {
             log "  U-Boot 阶段完成，继续监控串口输出 (剩余 ${remaining_time}s)..."
 
             # 从 .uboot.json 获取串口设备
-            local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+            local uboot_json_file="$CTX_COMPONENT_DIR/.uboot.json"
             # 回退: 框架自带的 uboot.json
             if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_RUNNER/json/uboot.json" ]; then
                 uboot_json_file="$SCRIPT_DIR_RUNNER/json/uboot.json"
@@ -155,7 +201,7 @@ run_with_success_detection() {
                 local saved_stty=$(stty -g 2>/dev/null) || true
 
                 # 根据 --print 选项决定是否打印到标准输出
-                if [[ "$PRINT_OUTPUT" == true ]]; then
+                if [[ "$OPT_PRINT_OUTPUT" == true ]]; then
                     timeout $remaining_time cat "$serial_port" 2>/dev/null | tee -a "$log_file" &
                 else
                     timeout $remaining_time cat "$serial_port" 2>/dev/null >> "$log_file" &

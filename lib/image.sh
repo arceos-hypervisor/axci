@@ -2,11 +2,24 @@
 #
 # image.sh - 镜像下载和 ostool 安装（QEMU 和 Board 共用）
 #
+# 此文件负责:
+#   1. 确保 ostool 工具已安装
+#   2. 下载测试所需的虚拟机镜像 (kernel, rootfs 等)
+#
+# 镜像存储位置: /tmp/.axvisor-images/
+#
+# 使用方式: source "$SCRIPT_DIR/lib/image.sh"
+#
 
 SCRIPT_DIR_IMAGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_IMAGE/lib/common.sh"
 
+# =============================================================================
+# 工具安装函数
+# =============================================================================
+
 # 确保 ostool 已安装
+# ostool 用于管理操作系统镜像的下载和配置
 ensure_ostool() {
     if ! command -v ostool &> /dev/null; then
         log "  安装 ostool..."
@@ -14,9 +27,21 @@ ensure_ostool() {
     fi
 }
 
-# 下载镜像
-# 参数: vmconfigs, vmimage_name, test_dir, log_file, status_file
+# =============================================================================
+# 镜像下载函数
+# =============================================================================
+
+# 下载测试镜像
+# 参数:
+#   $1 - vmconfigs: VM 配置文件列表 (逗号分隔)
+#   $2 - vmimage_name: 镜像名称列表 (逗号分隔)
+#   $3 - test_dir: 测试目录路径
+#   $4 - log_file: 日志文件路径
+#   $5 - status_file: 状态文件路径
 # 返回: 0 成功, 1 失败
+#
+# 镜像保存到: /tmp/.axvisor-images/{image_name}/
+# 如镜像已存在则跳过下载
 download_images() {
     local vmconfigs=$1
     local vmimage_name=$2
@@ -54,7 +79,7 @@ download_images() {
                 else
                     log_error "  镜像下载失败: $img"
                     echo "failed" > "$status_file"
-                    cd "$COMPONENT_DIR"
+                    cd "$CTX_COMPONENT_DIR"
                     return 1
                 fi
             else
@@ -63,6 +88,6 @@ download_images() {
         fi
     done
 
-    cd "$COMPONENT_DIR"
+    cd "$CTX_COMPONENT_DIR"
     return 0
 }

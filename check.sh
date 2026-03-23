@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+#
+# 组件代码质量检查脚本
+#
+# 此脚本用于检查 Rust 组件的代码质量，包括:
+#   - cargo fmt: 代码格式检查
+#   - cargo build: 编译检查
+#   - cargo clippy: Lint 检查
+#   - cargo doc: 文档构建检查
+#
+# 用法:
+#   check.sh [选项] [crate|all]
+#
+# 示例:
+#   check.sh axvcpu                                  # 检查单个组件
+#   check.sh all                                     # 检查所有组件
+#   check.sh --component-dir /path/to/crate          # 检查指定目录
+#
+
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)
@@ -6,29 +24,34 @@ ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd -P)
 CRATES_FILE="${SCRIPT_DIR}/crates.txt"
 source "${SCRIPT_DIR}/lib/common.sh"
 
+# =============================================================================
+# 日志函数包装
+# =============================================================================
+
 die() { error "$*"; }
 info() { log "$*"; }
 success() { log_success "$*"; }
 warn() { log_warn "$*"; }
 
 # =============================================================================
-# Configuration
+# 配置变量
 # =============================================================================
 
-DEFAULT_TARGET="aarch64-unknown-none-softfloat"
-RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
-FILTER_TARGETS=""
-CRATE_NAME=""
-COMPONENT_DIR=""
-ALL_FEATURES=true
-SKIP_BUILD=false
-LIST_TARGETS_JSON=false
-ONLY_STAGE=""
+CHK_DEFAULT_TARGET="aarch64-unknown-none-softfloat"
+CHK_RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
+CHK_FILTER_TARGETS=""
+CHK_CRATE_NAME=""
+CHK_COMPONENT_DIR=""
+CHK_ALL_FEATURES=true
+CHK_SKIP_BUILD=false
+CHK_LIST_TARGETS_JSON=false
+CHK_ONLY_STAGE=""
 
 # =============================================================================
-# Helper Functions
+# 辅助函数
 # =============================================================================
 
+# 显示使用帮助
 usage() {
     cat << 'EOF'
 组件代码质量检查脚本
@@ -65,6 +88,8 @@ usage() {
 EOF
 }
 
+# 从 crates.txt 读取所有组件名称
+# 返回: 组件名称列表 (每行一个)
 read_crates() {
     local crates=()
     while IFS= read -r crate || [[ -n "${crate}" ]]; do
@@ -75,36 +100,37 @@ read_crates() {
     printf '%s\n' "${crates[@]}"
 }
 
-# 解析参数
+# 解析命令行参数
+# 设置全局变量: CHK_CRATE_NAME, CHK_COMPONENT_DIR, FILTER_TARGETS 等
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             -c|--component-dir)
-                COMPONENT_DIR="$2"
+                CHK_COMPONENT_DIR="$2"
                 shift 2
                 ;;
             --targets)
-                FILTER_TARGETS="$2"
+                CHK_FILTER_TARGETS="$2"
                 shift 2
                 ;;
             --all-features)
-                ALL_FEATURES=true
+                CHK_ALL_FEATURES=true
                 shift
                 ;;
             --no-all-features)
-                ALL_FEATURES=false
+                CHK_ALL_FEATURES=false
                 shift
                 ;;
             --skip-build)
-                SKIP_BUILD=true
+                CHK_SKIP_BUILD=true
                 shift
                 ;;
             --list-targets-json)
-                LIST_TARGETS_JSON=true
+                CHK_LIST_TARGETS_JSON=true
                 shift
                 ;;
             --only)
-                ONLY_STAGE="$2"
+                CHK_ONLY_STAGE="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -112,7 +138,7 @@ parse_args() {
                 exit 0
                 ;;
             all)
-                CRATE_NAME="all"
+                CHK_CRATE_NAME="all"
                 shift
                 ;;
             -*)
@@ -120,8 +146,8 @@ parse_args() {
                 ;;
             *)
                 # 位置参数作为 crate 名称
-                if [[ -z "${CRATE_NAME}" ]]; then
-                    CRATE_NAME="$1"
+                if [[ -z "${CHK_CRATE_NAME}" ]]; then
+                    CHK_CRATE_NAME="$1"
                 else
                     die "只能指定一个 crate 名称"
                 fi
@@ -131,15 +157,16 @@ parse_args() {
     done
 }
 
-# 解析目标
+# 解析编译目标
 # 优先级: CLI --targets > config.json targets > 默认值
+# 返回: 逗号分隔的目标列表
 resolve_targets() {
-    local targets_input="$FILTER_TARGETS"
+    local targets_input="$CHK_FILTER_TARGETS"
     local config_file=""
 
     # 确定配置文件路径
-    if [[ -n "${COMPONENT_DIR}" ]]; then
-        config_file="${COMPONENT_DIR}/.github/config.json"
+    if [[ -n "${CHK_COMPONENT_DIR}" ]]; then
+        config_file="${CHK_COMPONENT_DIR}/.github/config.json"
     else
         config_file="${ROOT_DIR}/.github/config.json"
     fi
@@ -154,27 +181,37 @@ resolve_targets() {
 
     # 仍为空，使用默认值
     if [[ -z "${targets_input}" ]]; then
-        targets_input="${DEFAULT_TARGET}"
+        targets_input="${CHK_DEFAULT_TARGET}"
     fi
 
     # 返回解析后的目标列表
     echo "${targets_input}"
 }
 
+# 将逗号分隔的目标列表转换为 JSON 数组
+# 参数: $1 - targets: 逗号分隔的目标列表
+# 输出: JSON 数组到 stdout
 targets_to_json() {
     local targets="$1"
     echo "${targets}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s -c
 }
 
+# 判断是否应该运行指定阶段
+# 参数: $1 - stage: 阶段名称 (fmt/build/clippy/doc)
+# 返回: 0 应运行, 1 应跳过
 should_run_stage() {
     local stage="$1"
-    [[ -z "${ONLY_STAGE}" || "${ONLY_STAGE}" == "${stage}" ]]
+    [[ -z "${CHK_ONLY_STAGE}" || "${CHK_ONLY_STAGE}" == "${stage}" ]]
 }
 
 # =============================================================================
-# Check Functions
+# 检查函数
 # =============================================================================
 
+# 检查代码格式 (cargo fmt --check)
+# 参数:
+#   $1 - crate: 组件名称
+# 返回: 0 通过, 1 失败
 check_fmt() {
     info "[$1] 检查代码格式"
     if cargo fmt --all -- --check >/dev/null 2>&1; then
@@ -184,10 +221,15 @@ check_fmt() {
     fi
 }
 
+# 检查编译 (cargo build)
+# 参数:
+#   $1 - crate: 组件名称
+#   $2 - target: 编译目标三元组
+# 返回: 0 通过, 失败时退出脚本
 check_build() {
     info "[$1] 构建检查 (target: $2)"
     local feature_args=()
-    if [[ "${ALL_FEATURES}" == true ]]; then
+    if [[ "${CHK_ALL_FEATURES}" == true ]]; then
         feature_args+=(--all-features)
     fi
     if cargo build --target "$2" "${feature_args[@]}" >/dev/null 2>&1; then
@@ -197,10 +239,15 @@ check_build() {
     fi
 }
 
+# Clippy Lint 检查 (cargo clippy)
+# 参数:
+#   $1 - crate: 组件名称
+#   $2 - target: 编译目标三元组
+# 返回: 0 通过, 失败时退出脚本
 check_clippy() {
     info "[$1] Clippy 检查"
     local feature_args=()
-    if [[ "${ALL_FEATURES}" == true ]]; then
+    if [[ "${CHK_ALL_FEATURES}" == true ]]; then
         feature_args+=(--all-features)
     fi
     if cargo clippy --target "$2" "${feature_args[@]}" -- -D warnings >/dev/null 2>&1; then
@@ -210,19 +257,29 @@ check_clippy() {
     fi
 }
 
+# 文档构建检查 (cargo doc)
+# 参数:
+#   $1 - crate: 组件名称
+#   $2 - target: 编译目标三元组
+# 返回: 0 通过, 失败时退出脚本
 check_doc() {
     info "[$1] 文档构建检查"
     local feature_args=()
-    if [[ "${ALL_FEATURES}" == true ]]; then
+    if [[ "${CHK_ALL_FEATURES}" == true ]]; then
         feature_args+=(--all-features)
     fi
-    if RUSTDOCFLAGS="${RUSTDOCFLAGS}" cargo doc --no-deps --target "$2" "${feature_args[@]}" >/dev/null 2>&1; then
+    if RUSTDOCFLAGS="${CHK_RUSTDOCFLAGS}" cargo doc --no-deps --target "$2" "${feature_args[@]}" >/dev/null 2>&1; then
         success "[$1] 文档构建检查通过"
     else
         die "[$1] 文档构建检查失败"
     fi
 }
 
+# 检查单个组件的完整流程
+# 参数:
+#   $1 - crate: 组件名称
+#   $2 - target: 编译目标三元组
+# 返回: 0 通过, 1 失败
 check_crate() {
     local crate="$1" target="$2" crate_dir="${ROOT_DIR}/${1}"
     
@@ -235,7 +292,7 @@ check_crate() {
     if should_run_stage fmt; then
         check_fmt "${crate}" || { popd >/dev/null; return 1; }
     fi
-    if should_run_stage build && [[ "${SKIP_BUILD}" != true ]]; then
+    if should_run_stage build && [[ "${CHK_SKIP_BUILD}" != true ]]; then
         check_build "${crate}" "${target}"
     fi
     if should_run_stage clippy; then
@@ -250,20 +307,23 @@ check_crate() {
 }
 
 # 检查指定目录的组件 (通过 --component-dir 指定)
+# 参数:
+#   $1 - target: 编译目标三元组
+# 返回: 0 通过, 1 失败
 check_component_dir() {
     local target="$1"
-    local crate_name=$(basename "${COMPONENT_DIR}")
+    local crate_name=$(basename "${CHK_COMPONENT_DIR}")
     
-    [[ -d "${COMPONENT_DIR}" ]] || die "组件目录不存在: ${COMPONENT_DIR}"
-    [[ -f "${COMPONENT_DIR}/Cargo.toml" ]] || die "不是 Rust 项目: ${COMPONENT_DIR}"
+    [[ -d "${CHK_COMPONENT_DIR}" ]] || die "组件目录不存在: ${CHK_COMPONENT_DIR}"
+    [[ -f "${CHK_COMPONENT_DIR}/Cargo.toml" ]] || die "不是 Rust 项目: ${CHK_COMPONENT_DIR}"
     
     printf '\n%b========== %s ==========%b\n' "${BLUE}" "${crate_name}" "${NC}"
     
-    pushd "${COMPONENT_DIR}" >/dev/null
+    pushd "${CHK_COMPONENT_DIR}" >/dev/null
     if should_run_stage fmt; then
         check_fmt "${crate_name}" || { popd >/dev/null; return 1; }
     fi
-    if should_run_stage build && [[ "${SKIP_BUILD}" != true ]]; then
+    if should_run_stage build && [[ "${CHK_SKIP_BUILD}" != true ]]; then
         check_build "${crate_name}" "${target}"
     fi
     if should_run_stage clippy; then
@@ -277,6 +337,10 @@ check_component_dir() {
     success "[${crate_name}] 所有检查通过"
 }
 
+# 检查所有组件 (读取 crates.txt)
+# 参数:
+#   $1 - target: 编译目标三元组
+# 返回: 0 全部通过, 有失败时退出脚本
 check_all() {
     local target="$1"
     local crates passed=() failed=()
@@ -318,26 +382,28 @@ check_all() {
 }
 
 # =============================================================================
-# Main
+# 主函数
 # =============================================================================
 
+# 主入口函数
+# 解析参数并执行检查流程
 main() {
     parse_args "$@"
     
     local resolved_targets
     resolved_targets="$(resolve_targets)"
 
-    if [[ "${LIST_TARGETS_JSON}" == true ]]; then
+    if [[ "${CHK_LIST_TARGETS_JSON}" == true ]]; then
         targets_to_json "${resolved_targets}"
         exit 0
     fi
     
     # 如果指定了 --component-dir，直接检查该目录
-    if [[ -n "${COMPONENT_DIR}" ]]; then
+    if [[ -n "${CHK_COMPONENT_DIR}" ]]; then
         local targets_array=()
         IFS=',' read -ra targets_array <<< "${resolved_targets}"
         
-        info "组件目录: ${COMPONENT_DIR}"
+        info "组件目录: ${CHK_COMPONENT_DIR}"
         info "检查目标: ${targets_array[*]}"
         
         # 为每个目标运行检查
@@ -363,7 +429,7 @@ main() {
     fi
     
     # 如果没有指定 crate，显示帮助
-    if [[ -z "${CRATE_NAME}" ]]; then
+    if [[ -z "${CHK_CRATE_NAME}" ]]; then
         usage
         exit 0
     fi
@@ -382,12 +448,12 @@ main() {
         
         printf '\n%b========== 目标: %s ==========%b\n' "${BLUE}" "${target}" "${NC}"
         
-        if [[ "${CRATE_NAME}" == "all" ]]; then
+        if [[ "${CHK_CRATE_NAME}" == "all" ]]; then
             if ! check_all "${target}"; then
                 all_passed=false
             fi
         else
-            if ! check_crate "${CRATE_NAME}" "${target}"; then
+            if ! check_crate "${CHK_CRATE_NAME}" "${target}"; then
                 all_passed=false
             fi
         fi

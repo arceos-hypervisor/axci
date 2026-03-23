@@ -2,12 +2,34 @@
 #
 # qemu.sh - QEMU 测试专用：镜像配置和命令准备
 #
+# 此文件负责 QEMU 模拟环境测试的准备工作:
+#   1. 配置内核镜像路径 (kernel_path)
+#   2. 处理 rootfs 镜像配置
+#   3. 生成完整的测试命令
+#
+# 使用方式: source "$SCRIPT_DIR/lib/qemu.sh"
+#
 
 SCRIPT_DIR_QEMU="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_QEMU/lib/common.sh"
 
+# =============================================================================
+# QEMU 镜像配置函数
+# =============================================================================
+
 # 设置 QEMU 镜像配置（kernel_path、rootfs 处理）
-# 参数: target_config, target_name, test_dir, log_file, status_file
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
+#   $2 - target_name: 测试目标名称
+#   $3 - test_dir: 测试目录路径
+#   $4 - log_file: 日志文件路径
+#   $5 - status_file: 状态文件路径
+# 返回: 0 成功, 1 失败
+#
+# 处理逻辑:
+#   - fs 模式: 文件系统存储，无需修改配置
+#   - memory 模式: 更新 kernel_path 指向下载的镜像
+#   - 自动检测并配置 rootfs.img
 setup_qemu_images() {
     local target_config=$1
     local target_name=$2
@@ -82,13 +104,22 @@ setup_qemu_images() {
             log_warn "  配置文件不存在: $config"
         fi
     done
-    cd "$COMPONENT_DIR"
+    cd "$CTX_COMPONENT_DIR"
     return 0
 }
 
+# =============================================================================
+# QEMU 命令准备函数
+# =============================================================================
+
 # 准备 QEMU 测试命令
-# 参数: target_config
+# 参数:
+#   $1 - target_config: 测试目标配置 (JSON 字符串)
 # 输出: 完整的测试命令到 stdout
+#
+# 特殊处理:
+#   - NimbOS 目标使用 Python 包装器自动发送 usertests 命令
+#   - 其他目标直接使用配置中的 command
 prepare_qemu_command() {
     local target_config=$1
 
