@@ -26,11 +26,14 @@ get_board_power_serial() {
         phytiumpi)
             echo "/dev/ttyUSB1"
             ;;
+        roc-rk3568-pc)
+            echo "/dev/ttyUSB2"
+            ;;
         x86_64-pc)
             echo "/dev/ttyUSB4"
             ;;
-        roc-rk3568-pc)
-            echo "/dev/ttyUSB2"
+        visionfive2)
+            echo "/dev/ttyUSB7"
             ;;
         *)
             echo ""

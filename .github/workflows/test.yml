@@ -59,12 +59,15 @@ jobs:
             if [[ "$target" == *"board-phytiumpi"* ]]; then
               runner='["self-hosted", "phytiumpi"]'
               board='"phytiumpi"'
-            elif [[ "$target" == *"board-x86_64-pc"* ]]; then
-              runner='["self-hosted", "x86_64-pc"]'
-              board='"x86_64-pc"'
             elif [[ "$target" == *"board-roc-rk3568-pc"* ]]; then
               runner='["self-hosted", "roc-rk3568-pc"]'
               board='"roc-rk3568-pc"'
+            elif [[ "$target" == *"board-x86_64-pc"* ]]; then
+              runner='["self-hosted", "x86_64-pc"]'
+              board='"x86_64-pc"'
+            elif [[ "$target" == *"board-riscv64-visionfive2"* ]]; then
+              runner='["self-hosted", "visionfive2"]'
+              board='"visionfive2"'
             else
               # QEMU 测试和其他测试使用 self-hosted
               runner='"self-hosted"'

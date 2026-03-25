@@ -99,10 +99,11 @@ Hypervisor Test Framework - 本地测试脚本
   axvisor-board-x86_64-pc-arceos  测试 axvisor 在 x86_64-pc 开发板上的 ArceOS 镜像
   axvisor-board-roc-rk3568-pc-arceos  测试 axvisor 在 roc-rk3568-pc 开发板上的 ArceOS 镜像
   axvisor-board-roc-rk3568-pc-linux   测试 axvisor 在 roc-rk3568-pc 开发板上的 Linux 镜像
-  starry-riscv64             测试 starry 在 riscv64 架构下
-  starry-loongarch64         测试 starry 在 loongarch64 架构下
-  starry-aarch64             测试 starry 在 aarch64 架构下
-  starry-x86_64              测试 starry 在 x86_64 架构下
+  starry-qemu-riscv64             测试 starry 在 QEMU riscv64 架构下
+  starry-qemu-loongarch64         测试 starry 在 QEMU loongarch64 架构下
+  starry-qemu-aarch64             测试 starry 在 QEMU aarch64 架构下
+  starry-qemu-x86_64              测试 starry 在 QEMU x86_64 架构下
+  starry-board-riscv64-visionfive2  测试 starry 在 visionfive2 riscv64 开发板上
 
 镜像下载:
   镜像将从 https://github.com/arceos-hypervisor/axvisor-guest/releases/v0.0.22 自动下载
@@ -466,8 +467,13 @@ run_test_target() {
             local actual_build_cmd="$build_cmd"
             if [[ "$target_name" == starry-* ]]; then
                 local arch=$(echo "$target_config" | jq -r '.arch')
+                local board_name=$(echo "$target_config" | jq -r '.board // empty')
                 log "  构建架构: $arch"
                 actual_build_cmd="$build_cmd ARCH=$arch"
+                if [ -n "$board_name" ]; then
+                    log "  构建开发板: $board_name"
+                    actual_build_cmd="$actual_build_cmd BOARD=$board_name"
+                fi
             fi
 
             if timeout "${timeout_min}m" sh -c "$actual_build_cmd" >> "$log_file" 2>&1; then
@@ -539,11 +545,15 @@ run_test_target() {
             setup_uboot_config "$target_config" "$test_dir"
             full_test_cmd=$(prepare_board_command "$target_config")
 
-        elif [[ "$target_name" == starry-* ]]; then
-            # Starry 测试
+        elif [[ "$target_name" == starry-qemu* ]]; then
+            # Starry qemu 测试
             local arch=$(echo "$target_config" | jq -r '.arch')
             full_test_cmd="make ARCH=$arch run"
+        elif [[ "$target_name" == starry-board* ]]; then
+            # Starry board 测试
+            full_test_cmd="ostool run uboot"
         fi
+
 
         if [ "$DRY_RUN" == true ]; then
             echo "[DRY-RUN] cd $test_dir && timeout ${test_timeout}m $full_test_cmd"

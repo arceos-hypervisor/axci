@@ -95,7 +95,7 @@ check_dependencies() {
     # 检查并安装 cargo-clone
     if ! command -v cargo-clone &> /dev/null && ! cargo clone --help &> /dev/null; then
         log "安装 cargo-clone..."
-        cargo install cargo-clone
+        cargo install cargo-clone --locked
     fi
 
     log_success "依赖检查通过"
@@ -182,6 +182,18 @@ DEFAULT_TARGETS='[
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 15},
     "test": {},
+    "patch": {"path_template": "../component"}
+  },
+  {
+    "name": "starry-board-riscv64-visionfive2",
+    "type": "board",
+    "arch": "riscv64",
+    "board": "visionfive2",
+    "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
+    "build": {"command": "make build", "timeout_minutes": 15},
+    "test": {
+      "command": "ostool run uboot",
+    },
     "patch": {"path_template": "../component"}
   },
   {
