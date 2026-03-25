@@ -47,11 +47,23 @@
 name: Sync To Parent Repository
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      parent_repo:
+        description: 'Parent repository (e.g. owner/repo)'
+        required: false
+        default: 'rcore-os/tgoskits'
+        type: string
+      parent_base_branch:
+        description: 'Parent repository base branch'
+        required: false
+        default: 'main'
+        type: string
+      sync_branch_prefix:
+        description: 'Prefix for sync branch names'
+        required: false
+        default: 'subtree-sync'
+        type: string
 
 permissions:
   contents: read
@@ -60,10 +72,9 @@ jobs:
   sync-to-parent:
     runs-on: ubuntu-latest
     env:
-      # 需要修改为主仓库路径
-      PARENT_REPO: rcore-os/tgoskits
-      PARENT_BASE_BRANCH: main
-      SYNC_BRANCH_PREFIX: subtree-sync
+      PARENT_REPO: ${{ inputs.parent_repo || 'rcore-os/tgoskits' }}
+      PARENT_BASE_BRANCH: ${{ inputs.parent_base_branch || 'main' }}
+      SYNC_BRANCH_PREFIX: ${{ inputs.sync_branch_prefix || 'subtree-sync' }}
 
     steps:
       - name: Checkout parent repository
