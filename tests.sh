@@ -464,6 +464,12 @@ run_test_target() {
         else
             cd "$test_dir"
             # 为 starry 测试准备构建命令
+            echo "PATH=$PATH"
+            which gcc
+            command -v gcc
+            gcc -print-sysroot
+            env | sort
+            log "build_cmd: $build_cmd"
             local actual_build_cmd="$build_cmd"
             if [[ "$target_name" == starry-* ]]; then
                 local arch=$(echo "$target_config" | jq -r '.arch')
@@ -594,6 +600,14 @@ run_test_target() {
         cd "$COMPONENT_DIR"
         return 0
     fi
+
+    log "after"
+    echo "PATH=$PATH"
+    which gcc
+    command -v gcc
+    gcc -print-sysroot
+    env | sort
+    log "build_cmd: $build_cmd"
 }
 
 # 运行单元测试 (cargo test)
