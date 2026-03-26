@@ -33,7 +33,7 @@ get_board_power_serial() {
             echo "/dev/ttyUSB4"
             ;;
         visionfive2)
-            echo "/dev/ttyUSB7"
+            echo "/dev/ttyUSB6"
             ;;
         *)
             echo ""
@@ -113,6 +113,42 @@ cleanup_board_resources() {
     # 等待资源释放
     sleep 2
     log "  资源清理完成"
+}
+
+# 为 Starry Board 测试准备开发板配置文件
+# 参数: target_config, test_dir, log_file, status_file
+setup_starry_board_files() {
+    local target_config=$1
+    local test_dir=$2
+    local log_file=$3
+    local status_file=$4
+    local board_name=$(echo "$target_config" | jq -r '.board // empty')
+
+    ensure_ostool
+    if [ -z "$board_name" ]; then
+        log_warn "  未配置开发板名称，跳过 Starry Board 配置文件准备"
+        return 0
+    fi
+
+    local board_url="https://github.com/Starry-OS/board-config/releases/download/v0.1/${board_name}.tar.gz"
+    local archive_path="/tmp/${board_name}.tar.gz"
+
+    log "  下载 Starry 开发板配置文件: $board_url"
+
+    if ! wget "$board_url" -O "$archive_path" >> "$log_file" 2>&1; then
+        log_error "  下载开发板配置文件失败: $board_url"
+        echo "failed" > "$status_file"
+        return 1
+    fi
+
+    log "  解压开发板配置文件到 Starry 根目录: $test_dir"
+    if ! tar -xzf "$archive_path" -C "$test_dir" >> "$log_file" 2>&1; then
+        log_error "  解压开发板配置文件失败: $archive_path"
+        echo "failed" > "$status_file"
+        return 1
+    fi
+
+    return 0
 }
 
 # 设置 Board 测试镜像（下载、配置 kernel_path 为 memory 模式）

@@ -19,7 +19,7 @@
       "serial": "/dev/ttyUSB6",
       "baud_rate": "115200",
       "dtb_file": "./visionfive2.dtb",
-      "power_serial": "/dev/ttyUSB6"
+      "power_serial": "/dev/ttyUSB7"
     }
   }
 }

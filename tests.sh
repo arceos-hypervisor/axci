@@ -471,9 +471,17 @@ run_test_target() {
             env | sort
             log "build_cmd: $build_cmd"
             local actual_build_cmd="$build_cmd"
-            if [[ "$target_name" == starry-* ]]; then
+            if [[ "$target_name" == starry-qemu* ]] || [[ "$target_name" == starry-board* ]]; then
                 local arch=$(echo "$target_config" | jq -r '.arch')
                 local board_name=$(echo "$target_config" | jq -r '.board // empty')
+
+                if [[ "$target_name" == starry-board* ]]; then
+                    if ! setup_starry_board_files "$target_config" "$test_dir" "$log_file" "$status_file"; then
+                        cd "$COMPONENT_DIR"
+                        return 1
+                    fi
+                fi
+
                 log "  构建架构: $arch"
                 actual_build_cmd="$build_cmd ARCH=$arch"
                 if [ -n "$board_name" ]; then
@@ -557,7 +565,7 @@ run_test_target() {
             full_test_cmd="make ARCH=$arch run"
         elif [[ "$target_name" == starry-board* ]]; then
             # Starry board 测试
-            full_test_cmd="ostool run uboot"
+            full_test_cmd="sudo ostool run uboot"
         fi
 
 
