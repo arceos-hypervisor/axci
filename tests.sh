@@ -565,6 +565,7 @@ run_test_target() {
             full_test_cmd="make ARCH=$arch run"
         elif [[ "$target_name" == starry-board* ]]; then
             # Starry board 测试
+            setup_uboot_config "$target_config" "$test_dir"
             full_test_cmd="sudo ostool run uboot"
         fi
 
