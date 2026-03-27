@@ -10,7 +10,7 @@ source "$SCRIPT_DIR_IMAGE/lib/common.sh"
 ensure_ostool() {
     if ! command -v ostool &> /dev/null; then
         log "  安装 ostool..."
-        cargo +stable install ostool --version ^0.8
+        cargo +stable install ostool --version ^0.11
     fi
 }
 
