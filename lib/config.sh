@@ -88,8 +88,27 @@ check_dependencies() {
         missing+=("cargo (Rust)")
     fi
 
+    # python3（NimbOS PTY 自动输入脚本依赖）
+    if ! command -v python3 &> /dev/null; then
+        missing+=("python3")
+    fi
+
+    # Starry 构建依赖（仅在会运行 Starry 目标时检查）
+    if [[ "${FILTER_SUITE:-}" == *starry* ]] || [[ "${TEST_TARGET:-all}" == "all" ]] || [[ "${TEST_TARGET:-}" == starry* ]]; then
+        if ! command -v cmake &> /dev/null; then
+            missing+=("cmake (Starry rootfs/build 依赖)")
+        fi
+    fi
+
+    # Starry aarch64 musl 交叉编译器
+    if [[ "${FILTER_SUITE:-}" == *starry-aarch64* ]] || [[ "${TEST_TARGET:-all}" == "all" ]] || [[ "${TEST_TARGET:-}" == "starry" ]] || [[ "${TEST_TARGET:-}" == "starry-aarch64" ]]; then
+        if ! command -v aarch64-linux-musl-cc &> /dev/null && ! command -v aarch64-linux-musl-gcc &> /dev/null; then
+            missing+=("aarch64-linux-musl-cc 或 aarch64-linux-musl-gcc (Starry aarch64 musl 交叉编译器)")
+        fi
+    fi
+
     if [ ${#missing[@]} -gt 0 ]; then
-        error "缺少依赖: ${missing[*]}\n请安装后重试。"
+        error "缺少依赖: ${missing[*]}\n请安装后重试。若是 Starry aarch64，可参考 setup-musl prebuilt 工具链。"
     fi
 
     # 检查并安装 cargo-clone
