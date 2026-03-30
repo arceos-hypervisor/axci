@@ -6,6 +6,18 @@
 SCRIPT_DIR_RUNNER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR_RUNNER/lib/common.sh"
 
+uboot_config_has_power_control() {
+    local test_dir="${1:-}"
+    local uboot_toml_file=""
+
+    [ -n "$test_dir" ] && uboot_toml_file="$test_dir/.uboot.toml"
+    [ -z "$uboot_toml_file" ] && return 1
+    [ ! -f "$uboot_toml_file" ] && return 1
+
+    grep -q '^board_reset_cmd[[:space:]]*=' "$uboot_toml_file" || \
+        grep -q '^board_power_off_cmd[[:space:]]*=' "$uboot_toml_file"
+}
+
 # 检查并关闭占用端口5555的程序
 kill_port_5555_processes() {
     local pids=$(sudo lsof -ti :5555 2>/dev/null)
@@ -84,9 +96,13 @@ run_with_success_detection() {
                     echo "true" > "$power_flag_file"
                     echo "$(date +%s)" >> "$power_flag_file"
                     # 提示用户上电
-                    log "  准备就绪，请给开发板上电…"
-                    # 执行上电命令
-                    control_board_power "$board_name" "on"
+                    if uboot_config_has_power_control "$test_dir"; then
+                        log "  检测到 .uboot.toml 已配置电源控制，交由 ostool 执行 reset/power-off"
+                    else
+                        log "  准备就绪，请给开发板上电…"
+                        # 执行上电命令
+                        control_board_power "$board_name" "on"
+                    fi
                 fi
             fi
 

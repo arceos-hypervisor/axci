@@ -33,7 +33,7 @@ get_board_power_serial() {
             echo "/dev/ttyUSB4"
             ;;
         visionfive2)
-            echo "/dev/ttyUSB6"
+            echo "/dev/ttyUSB7"
             ;;
         *)
             echo ""
@@ -84,7 +84,11 @@ cleanup_board_resources() {
     log "  清理测试资源..."
 
     # 1. 关闭开发板电源
-    control_board_power "$board_name" "off"
+    if [ -f "$test_dir/.uboot.toml" ] && grep -q '^board_power_off_cmd[[:space:]]*=' "$test_dir/.uboot.toml"; then
+        log "  .uboot.toml 已配置 board_power_off_cmd，跳过额外下电"
+    else
+        control_board_power "$board_name" "off"
+    fi
 
     # 2. 杀掉可能残留的 cargo-osrun 进程
     local pids=$(ps aux | grep -E "cargo-osr|cargo osr" | grep -v grep | awk '{print $2}')
