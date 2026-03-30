@@ -346,14 +346,36 @@ setup_uboot_config() {
     local uboot_config_file=".uboot.toml"
     local uboot_json_file="$COMPONENT_DIR/.uboot.json"
     local uboot_template_path=$(echo "$target_config" | jq -r '.test.uboot_config // empty')
+    local resolved_template_path=""
+
+    resolve_uboot_template_path() {
+        local template_path=$1
+
+        if [ -z "$template_path" ]; then
+            return 1
+        fi
+
+        if [ -f "$template_path" ]; then
+            echo "$template_path"
+            return 0
+        fi
+
+        if [ -f "$SCRIPT_DIR_BOARD/$template_path" ]; then
+            echo "$SCRIPT_DIR_BOARD/$template_path"
+            return 0
+        fi
+
+        return 1
+    }
 
     # 回退: 框架自带的 uboot.json
     if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
         uboot_json_file="$SCRIPT_DIR_BOARD/json/uboot.json"
     fi
 
-    if [ -n "$uboot_template_path" ] && [ ! -f "$uboot_template_path" ] && [ -f "$SCRIPT_DIR_BOARD/$uboot_template_path" ]; then
-        uboot_template_path="$SCRIPT_DIR_BOARD/$uboot_template_path"
+    resolved_template_path=$(resolve_uboot_template_path "$uboot_template_path" || true)
+    if [ -n "$resolved_template_path" ]; then
+        uboot_template_path="$resolved_template_path"
     fi
 
     if [ ! -f "$uboot_config_file" ]; then
@@ -368,6 +390,12 @@ setup_uboot_config() {
         local serial_input=""
         local baud_rate_input=""
         local dtb_file_input=""
+        local board_power_off_cmd_input=""
+        local board_reset_cmd_input=""
+        local network_interface_input=""
+        local tftp_dir_input=""
+        local success_regex_input="[]"
+        local fail_regex_input="[]"
         local board_name=$(echo "$target_config" | jq -r '.board')
 
         # 尝试从 .uboot.json 读取配置
@@ -380,12 +408,20 @@ setup_uboot_config() {
                 serial_input=$(echo "$board_config" | jq -r '.serial // empty')
                 baud_rate_input=$(echo "$board_config" | jq -r '.baud_rate // empty')
                 dtb_file_input=$(echo "$board_config" | jq -r '.dtb_file // empty')
+                board_power_off_cmd_input=$(echo "$board_config" | jq -r '.board_power_off_cmd // empty')
+                board_reset_cmd_input=$(echo "$board_config" | jq -r '.board_reset_cmd // empty')
+                network_interface_input=$(echo "$board_config" | jq -r '.network_interface // empty')
+                tftp_dir_input=$(echo "$board_config" | jq -r '.tftp_dir // empty')
+                success_regex_input=$(echo "$board_config" | jq -c '.success_regex // []')
+                fail_regex_input=$(echo "$board_config" | jq -c '.fail_regex // []')
 
                 if [ -n "$serial_input" ] && [ -n "$baud_rate_input" ] && [ -n "$dtb_file_input" ]; then
                     log "  从配置文件读取到:"
                     log "  - 串口: $serial_input"
                     log "  - 波特率: $baud_rate_input"
                     log "  - DTB文件: $dtb_file_input"
+                    [ -n "$network_interface_input" ] && log "  - 网络接口: $network_interface_input"
+                    [ -n "$tftp_dir_input" ] && log "  - TFTP 目录: $tftp_dir_input"
                 else
                     log_warn "  .uboot.json 中 $board_name 的配置不完整，将使用交互式输入"
                     serial_input=""
@@ -429,10 +465,22 @@ setup_uboot_config() {
         cat > "$uboot_config_file" << EOF
 serial = "$serial_input"
 baud_rate = "$baud_rate_input"
-success_regex = []
-fail_regex = []
+success_regex = $success_regex_input
+fail_regex = $fail_regex_input
 dtb_file = "$dtb_file_input"
 EOF
+
+        if [ -n "$board_power_off_cmd_input" ]; then
+            printf 'board_power_off_cmd = "%s"\n' "$board_power_off_cmd_input" >> "$uboot_config_file"
+        fi
+        if [ -n "$board_reset_cmd_input" ]; then
+            printf 'board_reset_cmd = "%s"\n' "$board_reset_cmd_input" >> "$uboot_config_file"
+        fi
+        if [ -n "$network_interface_input" ] || [ -n "$tftp_dir_input" ]; then
+            printf '\n[net]\n' >> "$uboot_config_file"
+            [ -n "$network_interface_input" ] && printf 'interface = "%s"\n' "$network_interface_input" >> "$uboot_config_file"
+            [ -n "$tftp_dir_input" ] && printf 'tftp_dir = "%s"\n' "$tftp_dir_input" >> "$uboot_config_file"
+        fi
 
         log "  U-Boot 配置已保存到: $uboot_config_file"
         log ""
