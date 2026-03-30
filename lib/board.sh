@@ -345,13 +345,26 @@ setup_uboot_config() {
     log "  检查 U-Boot 配置..."
     local uboot_config_file=".uboot.toml"
     local uboot_json_file="$COMPONENT_DIR/.uboot.json"
+    local uboot_template_path=$(echo "$target_config" | jq -r '.test.uboot_config // empty')
 
     # 回退: 框架自带的 uboot.json
     if [ ! -f "$uboot_json_file" ] && [ -f "$SCRIPT_DIR_BOARD/json/uboot.json" ]; then
         uboot_json_file="$SCRIPT_DIR_BOARD/json/uboot.json"
     fi
 
+    if [ -n "$uboot_template_path" ] && [ ! -f "$uboot_template_path" ] && [ -f "$SCRIPT_DIR_BOARD/$uboot_template_path" ]; then
+        uboot_template_path="$SCRIPT_DIR_BOARD/$uboot_template_path"
+    fi
+
     if [ ! -f "$uboot_config_file" ]; then
+        if [ -n "$uboot_template_path" ] && [ -f "$uboot_template_path" ]; then
+            cp "$uboot_template_path" "$uboot_config_file"
+            log "  复用 U-Boot 模板: $uboot_template_path"
+            log "  U-Boot 配置已保存到: $uboot_config_file"
+            log ""
+            return 0
+        fi
+
         local serial_input=""
         local baud_rate_input=""
         local dtb_file_input=""
