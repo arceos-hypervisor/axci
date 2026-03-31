@@ -360,6 +360,10 @@ setup_uboot_config() {
     if [ ! -f "$uboot_config_file" ]; then
         if [ -n "$uboot_template_path" ] && [ -f "$uboot_template_path" ]; then
             cp "$uboot_template_path" "$uboot_config_file"
+            if [ "$board_name" = "visionfive2" ]; then
+                sed -i '/^board_power_off_cmd[[:space:]]*=/d' "$uboot_config_file"
+                sed -i '/^board_reset_cmd[[:space:]]*=/d' "$uboot_config_file"
+            fi
             log "  复用 U-Boot 模板: $uboot_template_path"
             log "  U-Boot 配置已保存到: $uboot_config_file"
             log ""
