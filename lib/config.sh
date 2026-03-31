@@ -193,7 +193,7 @@ DEFAULT_TARGETS='[
     "build": {"command": "make build", "timeout_minutes": 15},
     "test": {
       "command": "ostool run uboot",
-      "uboot_config": ".github/workflows/uboot.toml",
+      "uboot_config": ".github/workflows/axvisor/uboot.toml",
     },
     "patch": {"path_template": "../component"}
   },
