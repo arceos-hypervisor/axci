@@ -192,7 +192,7 @@ DEFAULT_TARGETS='[
     "repo": {"url": "https://github.com/Starry-OS/StarryOS", "branch": "main"},
     "build": {"command": "make build", "timeout_minutes": 15},
     "test": {
-      "command": "ostool run uboot",
+      "command": "script -qefc \\\"ostool run uboot\\\" /dev/null",
       "uboot_config": ".github/workflows/axvisor/uboot.toml",
     },
     "patch": {"path_template": "../component"}

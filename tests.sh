@@ -566,7 +566,7 @@ run_test_target() {
         elif [[ "$target_name" == starry-board* ]]; then
             # Starry board 测试
             setup_uboot_config "$target_config" "$test_dir"
-            full_test_cmd="ostool run uboot"
+            full_test_cmd="script -qefc 'ostool run uboot' /dev/null"
         fi
 
 
