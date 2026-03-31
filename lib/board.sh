@@ -33,7 +33,7 @@ get_board_power_serial() {
             echo "/dev/ttyUSB4"
             ;;
         visionfive2)
-            echo "/dev/ttyUSB6"
+            echo "/dev/ttyUSB7"
             ;;
         *)
             echo ""

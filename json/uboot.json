@@ -18,7 +18,7 @@
     "visionfive2": {
       "serial": "/dev/ttyUSB6",
       "baud_rate": "115200",
-      "dtb_file": "./visionfive2.dtb",
+      "dtb_file": "/home/runner/tftp/visionfive2.dtb",
       "power_serial": "/dev/ttyUSB7"
     }
   }
